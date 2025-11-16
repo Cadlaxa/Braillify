@@ -1,16 +1,8 @@
-//todo: text slider sa screen
-//todo: way to send texts into a device (maybe wifi or type cable?)
-//todo: tts?
-//todo: special symbol contexts
-
-//fix: auto mode not auto-ing
-//fix: space and del should shift the characters
-
 #include <Keypad.h>
-#include <Adafruit_LiquidCrystal.h>
+#include <LiquidCrystal_I2C.h>
 
 // LCD setup (I2C)
-Adafruit_LiquidCrystal lcd(0);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // Keypad setup
 const byte ROWS = 4;
@@ -158,7 +150,7 @@ String brailleToChar(byte bits) {
     byte pattern = reorderBraille(bits);
     String out = "";
 
-    // ---- CAPITALIZATION SYSTEM ----
+    // CAPITALIZATION SYSTEM
     if (pattern == 0b100000) { // dot6
         if (dot6PressedOnce) { // second press → caps lock
             capsLock = true;
@@ -184,7 +176,7 @@ String brailleToChar(byte bits) {
     }
     if (pattern != 0b100000) dot6PressedOnce = false;
 
-    // ---- NUMBER SYSTEM ----
+    // NUMBER SYSTEM TRIGGER
     if (pattern == 0b111100) { // dot3+4+5+6
         if (numPressedOnce) { // second press → number lock
             numberLock = true;
@@ -197,7 +189,7 @@ String brailleToChar(byte bits) {
             cursorPos++;
             if (cursorPos > 15) cursorPos = 15;
             return "";
-        } else { // first press → next number
+        } else {
             numPressedOnce = true;
             nextNumber = true;
             numberLock = false;
@@ -218,34 +210,28 @@ String brailleToChar(byte bits) {
         clearTempIndicator();
     }
 
-    // ---- AUTO MODE DETECTION ----
+    // DETECT AUTO MODE
     if (currentMode == AUTO && pattern != 0) {
         if (brailleToText(pattern) != "~") currentMode = TEXT;
         else if (specialFromBraille(pattern) != '0') currentMode = SPECIAL;
         else if (brailleToNumber(pattern) != '?') currentMode = NUMBER;
     }
 
-    // ---- GENERATE OUTPUT BASED ON MODE ----
+    // PROCESS BASED ON MODE
     switch(currentMode) {
       case TEXT:
-          // check special first
           {
               char s = specialFromBraille(pattern);
-              if (s != '0') {
-                  out = String(s);
-              } else {
-                  out = brailleToText(pattern);
-              }
+              if (s != '0') out = String(s);
+              else out = brailleToText(pattern);
           }
           break;
 
       case SPECIAL:
           {
-              char s = brailleToNumber(pattern);
-              if (s != '?') out = String(s);
-              else {
-                  out = brailleToText(pattern);
-              }
+              char s = specialFromBraille(pattern);
+              if (s != '0') out = String(s);
+              else out = brailleToText(pattern);
           }
           break;
 
@@ -254,15 +240,10 @@ String brailleToChar(byte bits) {
         if (n != '?') {
             out = String(n);
         } else {
-            // Not a number → check special first
             char s = specialFromBraille(pattern);
-            if (s != '0') {
-                out = String(s);
-            } else {
-                // fallback to text
-                out = brailleToText(pattern);
-            }
-            // exit number mode
+            if (s != '0') out = String(s);
+            else out = brailleToText(pattern);
+
             currentMode = TEXT;
             numberLock = false;
             nextNumber = false;
@@ -271,12 +252,13 @@ String brailleToChar(byte bits) {
       } break;
     }
 
-    // ---- APPLY CAPITALIZATION ----
+    // CAPITALIZE
     if (nextCapital || capsLock) {
         out.toUpperCase();
         nextCapital = false;
         clearTempIndicator();
     }
+
     return out;
 }
 
@@ -289,7 +271,6 @@ void clearTempIndicator() {
   }
 }
 
-// Update LCD mode display
 void updateLCDMode() {
   lcd.setCursor(0,0);
   switch(currentMode) {
@@ -301,13 +282,16 @@ void updateLCDMode() {
 }
 
 void setup() {
-  lcd.begin(16,2);
-  lcd.setBacklight(HIGH);
+  lcd.init();
+  lcd.backlight();
   lcd.clear();
+
   updateLCDMode();
   lcd.setCursor(0,1);
+
   lcd.cursor();
   lcd.blink();
+
   Serial.begin(9600);
 }
 
@@ -316,16 +300,14 @@ void loop() {
   if (!key) return;
 
   switch(key) {
-    // Mode cycle
     case '0':
       if (currentMode == AUTO) currentMode = TEXT;
       else if (currentMode == TEXT) currentMode = SPECIAL;
       else if (currentMode == SPECIAL) currentMode = NUMBER;
-      else if (currentMode == NUMBER) currentMode = AUTO; // cycle back
+      else if (currentMode == NUMBER) currentMode = AUTO;
       updateLCDMode();
       break;
 
-    // Dots
     case '2': brailleBits |= 1 << 0; break;
     case '5': brailleBits |= 1 << 1; break;
     case '8': brailleBits |= 1 << 2; break;
@@ -333,12 +315,11 @@ void loop() {
     case '6': brailleBits |= 1 << 4; break;
     case '9': brailleBits |= 1 << 5; break;
 
-    // Space
     case '*':
       lcd.setCursor(cursorPos,1);
       lcd.print(" ");
       if (cursorPos < 15) cursorPos++;
-      // Reset
+
       currentMode = TEXT;
       capsLock = false;
       nextCapital = false;
@@ -346,11 +327,11 @@ void loop() {
       numberLock = false;
       break;
 
-    // Convert braille → output
     case '#': {
       String out = brailleToChar(brailleBits);
       Serial.print("Bits: "); Serial.println(brailleBits,BIN);
-      if (out == "") { // temp indicator (>, >>, #)
+
+      if (out == "") {
         brailleBits = 0;
         break;
       }
@@ -363,7 +344,6 @@ void loop() {
       brailleBits = 0;
     } break;
 
-    // Backspace
     case 'D':
       if (cursorPos > 0) cursorPos--;
       lcd.setCursor(cursorPos,1);
@@ -371,7 +351,6 @@ void loop() {
       lcd.setCursor(cursorPos,1);
       break;
 
-    // Left/right arrows
     case '7': if (cursorPos > 0) cursorPos--; break;
     case 'C': if (cursorPos < 15) cursorPos++; break;
   }
