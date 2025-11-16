@@ -11,11 +11,14 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Mode functions `(AUTO, TEXT, SPECIAL, NUMBER)`
 - [x] Capitalization Marker `dot6`
 - [x] Number trigger `dot3 + dot4 + dot5 + dot6`
-- [ ] Sliding text
+- [x] Sliding text
 - [ ] Send data to device
-- [ ] Insert/delete function
+- [x] Insert/delete function
 - [ ] Accent markers
 - [ ] Context based punctuation markers
+
+## Bugs
+- Number trigger placement in other position doesn't add to the cursor position
 
 ## Genral Functions
 - **`Circular symbols`** = main braille pattern input
