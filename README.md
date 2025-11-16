@@ -12,10 +12,13 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Capitalization Marker `dot6`
 - [x] Number trigger `dot3 + dot4 + dot5 + dot6`
 - [x] Sliding text
+- [x] Uncontracted braille
+- [ ] Contracted braille (semi working)
 - [ ] Send data to device
 - [x] Insert/delete function
 - [ ] Accent markers
 - [ ] Context based punctuation markers
+- [ ] 5th sequence and other contractions 
 
 ## Bugs
 - Number trigger placement in other position doesn't add to the cursor position

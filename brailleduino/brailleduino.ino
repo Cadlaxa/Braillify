@@ -96,6 +96,7 @@ String brailleToText(byte b) {
     case 0b101101: return "x";
     case 0b111101: return "y";
     case 0b110101: return "z";
+
     case 0b101111: return "and";
     case 0b111111: return "for";
     case 0b110111: return "of";
@@ -108,6 +109,7 @@ String brailleToText(byte b) {
     case 0b110001: return "wh";
     case 0b101011: return "ed";
     case 0b111011: return "er";
+    
     case 0b101010: return "ow";
     case 0b100010: return "en";
     case 0b011100: return "ar";
@@ -144,7 +146,7 @@ String brailleToChar(byte bits) {
       nextCapital = false;
       dot6PressedOnce = false;
       lcd.setCursor(cursorPos, 1);
-      lcd.print(">");
+      lcd.print("^");
       indicatorLength = 2;
       cursorPos++;
       if (cursorPos > 15) cursorPos = 15;
@@ -153,7 +155,7 @@ String brailleToChar(byte bits) {
       dot6PressedOnce = true;
       nextCapital = true;
       lcd.setCursor(cursorPos, 1);
-      lcd.print(">");
+      lcd.print("^");
       indicatorLength = 1;
       cursorPos++;
       if (cursorPos > 15) cursorPos = 15;
