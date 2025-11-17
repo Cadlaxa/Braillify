@@ -35,6 +35,12 @@ bool dot6PressedOnce = false;
 bool numPressedOnce = false;
 int indicatorLength = 0;
 
+char lastKey = NO_KEY;
+unsigned long keyPressTime = 0; // when key was first pressed
+const unsigned long holdDelay = 800; // ms to wait before auto-repeat
+const unsigned long repeatRate = 150; // ms between repeats
+unsigned long nextRepeatTime = 0;
+
 enum Mode { AUTO, TEXT, NUMBER, SPECIAL };
 Mode currentMode = AUTO;
 
@@ -394,6 +400,7 @@ void setup() {
   lcd.init();
   lcd.backlight();
   lcd.clear();
+  keypad.setHoldTime(holdDelay);
 
   startUP();
 
@@ -404,68 +411,87 @@ void setup() {
   Serial.begin(9600);
 }
 
+char getHeldKey() {
+  for (byte r = 0; r < ROWS; r++) {
+      pinMode(rowPins[r], OUTPUT);
+      digitalWrite(rowPins[r], LOW); 
+
+      for (byte c = 0; c < COLS; c++) {
+          pinMode(colPins[c], INPUT_PULLUP);
+          if (digitalRead(colPins[c]) == LOW) {
+              // found pressed key
+              pinMode(rowPins[r], INPUT);
+              return keys[r][c];
+          }
+      }
+
+      pinMode(rowPins[r], INPUT);
+  }
+  return NO_KEY;
+}
+
 void loop() {
-  char key = keypad.getKey();
-  if (!key) return;
+  char key = getHeldKey();  
+  unsigned long now = millis();
 
-  switch(key) {
-    case '0': cycleMode(); break;
-
-    // dots -> set bits (these map to keypad numbers you've used)
-    case '2': brailleBits |= 1 << 0; break;
-    case '5': brailleBits |= 1 << 1; break;
-    case '8': brailleBits |= 1 << 2; break;
-    case '3': brailleBits |= 1 << 3; break;
-    case '6': brailleBits |= 1 << 4; break;
-    case '9': brailleBits |= 1 << 5; break;
-
-    case '*': // space
-      insertSpaceAtCursor();
-      // reset transient modes
-      if (currentMode = AUTO) {
-        currentMode = TEXT;
+  if (key != NO_KEY) {
+      if (key != lastKey) {
+          lastKey = key;
+          keyPressTime = now;
+          nextRepeatTime = now + holdDelay;
+          handleKeyPress(key);
+      } else if (now >= nextRepeatTime) {
+          // only repeat these keys
+          if (key == '*' || key == 'D' || key == '7' || key == 'C') {
+              handleKeyPress(key);
+              nextRepeatTime = now + repeatRate;
+          }
       }
-      capsLock = false;
-      nextCapital = false;
-      nextNumber = false;
-      numberLock = false;
-      break;
+  } else {
+      lastKey = NO_KEY; // key released
+  }
+}
 
-    case '#': { // convert braille cell -> output string and insert
-      String out = brailleToChar(brailleBits);
-      Serial.print("BrailleBits: "); Serial.print(out); Serial.print(" "); Serial.println(brailleBits, BIN);
-      if (out == "") { 
-          brailleBits = 0;
-          break;
-      }
+void handleKeyPress(char key) {
+    switch(key) {
+        case '0': cycleMode(); break;
 
-      if (out != "") {
-        for (int i = 0; i < out.length(); ++i) {
-          insertAtCursor(out[i]);
+        // Braille dots - single press only
+        case '2': brailleBits |= 1 << 0; break;
+        case '5': brailleBits |= 1 << 1; break;
+        case '8': brailleBits |= 1 << 2; break;
+        case '3': brailleBits |= 1 << 3; break;
+        case '6': brailleBits |= 1 << 4; break;
+        case '9': brailleBits |= 1 << 5; break;
+
+        case '*': // space
+            insertSpaceAtCursor();
+            if (currentMode = AUTO) currentMode = TEXT;
+            capsLock = false;
+            nextCapital = false;
+            nextNumber = false;
+            numberLock = false;
+            break;
+
+        case '#': { // braille -> char
+            String out = brailleToChar(brailleBits);
+            Serial.print("BrailleBits: "); Serial.print(out); Serial.print(" "); Serial.println(brailleBits, BIN);
+            if (out != "") {
+                for (int i = 0; i < out.length(); ++i) insertAtCursor(out[i]);
+            }
+            brailleBits = 0;
+            break;
         }
-      }
-      brailleBits = 0;
-      break;
+
+        case 'D': backspaceAtCursor(); break;
+        case '7': moveCursorLeft(); break;
+        case 'C': moveCursorRight(); break;
+
+        case 'A': saveLineToEEPROM(); break;
+        case 'B': loadLineFromEEPROM(); break;
+
+        default: break;
     }
 
-    case 'D': // backspace
-      backspaceAtCursor();
-      break;
-
-    case '7': moveCursorLeft(); break;
-    case 'C': moveCursorRight(); break;
-
-    case 'A': // ENTER / SAVE to EEPROM
-      saveLineToEEPROM();
-      break;
-    
-    case 'B': // ENTER / SAVE to EEPROM
-      loadLineFromEEPROM();
-      break;
-
-    default:
-      break;
-  }
-
-  lcd.setCursor(getLcdCursor(), 1);
+    lcd.setCursor(getLcdCursor(), 1);
 }

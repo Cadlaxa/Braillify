@@ -21,7 +21,7 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] 5th sequence and other contractions 
 - [x] Save string to memory
 - [x] Load string from memory
-- [ ] Hold button to trigger hold
+- [x] Hold button to trigger hold
 
 ## Bugs
 - Number trigger placement in other position doesn't add to the cursor position
