@@ -29,13 +29,19 @@ String fullBuffer = "";      // full text buffer (can be longer than 16)
 int windowStart = 0;         // left-most index shown on LCD
 bool nextCapital = false;
 bool capsLock = false;
+bool dot6PressedOnce = false;
+
 bool nextNumber = false;
 bool numberLock = false;
+bool numPressedOnce = false;
+
 bool nextSpecial = false;
 bool specialLock = false;
-bool dot6PressedOnce = false;
 bool specialPressedOnce = false;
-bool numPressedOnce = false;
+
+bool nextText = false;
+bool textLock = false;
+bool textPressedOnce = false;
 int indicatorLength = 0;
 
 char lastKey = NO_KEY;
@@ -47,122 +53,113 @@ unsigned long nextRepeatTime = 0;
 enum Mode { AUTO, TEXT, NUMBER, SPECIAL };
 Mode currentMode = AUTO;
 
-// ---------- Utility: reorder bits (keeps API consistent) ----------
-byte reorderBraille(byte bits) {
-  byte pattern = 0;
-  if (bits & (1 << 0)) pattern |= 1 << 0;
-  if (bits & (1 << 1)) pattern |= 1 << 1;
-  if (bits & (1 << 2)) pattern |= 1 << 2;
-  if (bits & (1 << 3)) pattern |= 1 << 3;
-  if (bits & (1 << 4)) pattern |= 1 << 4;
-  if (bits & (1 << 5)) pattern |= 1 << 5;
-  return pattern;
-}
 
 // ---------- Special & mapping functions ----------
 char specialFromBraille(byte p) {
   switch(p) {
-    case 0b100110: return '?';
-    case 0b10110:  return '!';
-    case 0b101111: return '&';
-    case 0b10:     return ',';
-    case 0b100100: return '_';
-    case 0b110010: return '.';
-    case 0b110:    return ';';
-    case 0b10010:  return ':';
-    case 0b110100: return '"';
-    case 0b110110: return ')';
-    case 0b1100:   return '/';
-    case 0b101100: return '@';
-    case 0b10100:  return '*';
-    case 0b100:    return '\''; 
+    case 38: return '?';
+    case 22: return '!';
+    case 47: return '&';
+    case 2:  return ',';
+    case 36: return '_';
+    case 50: return '.';
+    case 6:  return ';';
+    case 18: return ':';
+    case 52: return '"';
+    case 54: return ')'; 
+    case 12: return '/';
+    case 44: return '@';
+    case 20: return '*';
+    case 4:  return '\'';
+
     default: return '0';
   }
 }
 
 String brailleToText(byte b) {
   switch(b) {
-    case 0b1: return "a";
-    case 0b11: return "b";
-    case 0b1001: return "c";
-    case 0b11001: return "d";
-    case 0b10001: return "e";
-    case 0b1011: return "f";
-    case 0b11011: return "g";
-    case 0b10011: return "h";
-    case 0b1010: return "i";
-    case 0b11010: return "j";
-    case 0b101: return "k";
-    case 0b111: return "l";
-    case 0b1101: return "m";
-    case 0b11101: return "n";
-    case 0b10101: return "o";
-    case 0b1111: return "p";
-    case 0b11111: return "q";
-    case 0b10111: return "r";
-    case 0b1110: return "s";
-    case 0b11110: return "t";
-    case 0b100101: return "u";
-    case 0b100111: return "v";
-    case 0b111010: return "w";
-    case 0b101101: return "x";
-    case 0b111101: return "y";
-    case 0b110101: return "z";
+    case 1: return "a";
+    case 3: return "b";
+    case 9: return "c";
+    case 25: return "d";
+    case 17: return "e";
+    case 11: return "f";
+    case 27: return "g";
+    case 19: return "h";
+    case 10: return "i";
+    case 26: return "j";
+    case 5: return "k"; 
+    case 7: return "l";
+    case 13: return "m";
+    case 29: return "n";
+    case 21: return "o";
+    case 15: return "p";
+    case 31: return "q";
+    case 23: return "r";
+    case 14: return "s";
+    case 30: return "t";
+    case 37: return "u";
+    case 39: return "v";
+    case 58: return "w";
+    case 45: return "x";
+    case 61: return "y";
+    case 53: return "z";
 
     // contractions / common words
-    case 0b101111: return "and";
-    case 0b111111: return "for";
-    case 0b110111: return "of";
-    case 0b101110: return "the";
-    case 0b111110: return "with";
-    case 0b100001: return "ch";
-    case 0b100011: return "gh";
-    case 0b101001: return "sh";
-    case 0b111001: return "th";
-    case 0b110001: return "wh";
-    case 0b101011: return "ed";
-    case 0b111011: return "er";
-    case 0b101010: return "ow";
-    case 0b100010: return "en";
-    case 0b011100: return "ar";
+    case 47: return "and";
+    case 63: return "for";
+    case 55: return "of";
+    case 46: return "the";
+    case 62: return "with";
+    case 33: return "ch";
+    case 35: return "gh";
+    case 41: return "sh";
+    case 57: return "th";
+    case 49: return "wh";
+    case 43: return "ed";
+    case 59: return "er";
+    case 42: return "ow";
+    case 34: return "en";
+    case 28: return "ar";
 
-    case 0b110011: return "ou";
-    case 0b10: return "ea";
-    case 0b110: return "bb";
-    case 0b10010: return "cc";
-    case 0b110010: return "dd";
-    case 0b10110: return "ff";
-    case 0b110110: return "gg";
-    case 0b100110: return "in";
-    case 0b110100: return "by";
-    case 0b1100: return "st";
+    case 51: return "ou";
+    case 2: return "ea";
+    case 6: return "bb";
+    case 18: return "cc";
+    case 50: return "dd";
+    case 22: return "ff";
+    case 54: return "gg";
+    case 38: return "in";
+    case 52: return "by";
+    case 12: return "st";
+    case 44: return "ing";
   }
   return "~";
 }
 
 char brailleToNumber(byte b) {
   switch(b) {
-    case 0b000001: return '1';
-    case 0b000011: return '2';
-    case 0b001001: return '3';
-    case 0b011001: return '4';
-    case 0b010001: return '5';
-    case 0b001011: return '6';
-    case 0b011011: return '7';
-    case 0b010011: return '8';
-    case 0b001010: return '9';
-    case 0b011010: return '0';
+    case 1: return '1';
+    case 3: return '2';
+    case 9: return '3';
+    case 25: return '4';
+    case 17: return '5';
+    case 11: return '6';
+    case 27: return '7';
+    case 19: return '8';
+    case 10: return '9'; 
+    case 26: return '0';
   }
   return '?';
 }
 
 // ---------- Core convert (braille cell -> output string) ----------
 String brailleToChar(byte bits) {
-  byte pattern = reorderBraille(bits);
+  byte pattern = bits;
   String out = "";
 
   // CAPITALIZATION DOT6
-  if (pattern == 0b100000) {
+  if (pattern == 32) {
     if (dot6PressedOnce) {
       capsLock = true;
       nextCapital = false;
@@ -176,10 +173,10 @@ String brailleToChar(byte bits) {
       return "";
     }
   }
-  if (pattern != 0b100000) dot6PressedOnce = false;
+  if (pattern != 32) dot6PressedOnce = false;
 
   // NUMBER TRIGGER (dot3+4+5+6) -> 0b111100
-  if (pattern == 0b111100) {
+  if (pattern == 60) {
     if (numPressedOnce) {
       numberLock = true;
       nextNumber = false;
@@ -194,10 +191,10 @@ String brailleToChar(byte bits) {
       return "";
     }
   }
-  if (pattern != 0b111100) numPressedOnce = false;
+  if (pattern != 60) numPressedOnce = false;
 
   // SPECIAL CHARACTER TRIGGER (dot4+5+6) -> 111000
-  if (pattern == 0b111000) {
+  if (pattern == 56) {
     if (specialPressedOnce) {
       specialLock = true;
       nextSpecial = false;
@@ -212,7 +209,25 @@ String brailleToChar(byte bits) {
       return "";
     }
   }
-  if (pattern != 0b111000) specialPressedOnce = false;
+  if (pattern != 56) specialPressedOnce = false;
+
+  // TEXT TRIGGER (dot5+6) -> 110000
+  if (pattern == 48) {
+    if (textPressedOnce) {
+      textLock = true;
+      nextText = false;
+      textPressedOnce = false;
+      showTempIndicator('>', 2);
+      return "";
+    } else {
+      textPressedOnce = true;
+      nextText = true;
+      textLock = false;
+      showTempIndicator('>', 1);
+      return "";
+    }
+  }
+  if (pattern != 48) textPressedOnce = false;
 
   if (nextNumber || numberLock) {
     currentMode = NUMBER;
@@ -223,6 +238,12 @@ String brailleToChar(byte bits) {
   if (nextSpecial || specialLock) {
     currentMode = SPECIAL;
     nextSpecial = false;
+    clearTempIndicator();
+  }
+
+  if (nextText || textLock) {
+    currentMode = TEXT;
+    nextText = false;
     clearTempIndicator();
   }
 
@@ -285,6 +306,13 @@ String brailleToChar(byte bits) {
     out.toUpperCase();
     nextCapital = false;
     clearTempIndicator();
+  }
+
+  if ((nextCapital || capsLock) && pattern == 4) {
+    capsLock = false;
+    nextCapital = false;
+    clearTempIndicator();
+    return "";   // termination sign
   }
 
   return out;
@@ -507,12 +535,12 @@ void handleKeyPress(char key) {
         case '0': cycleMode(); break;
 
         // Braille dots - single press only
-        case '2': brailleBits |= 1 << 0; break;
-        case '5': brailleBits |= 1 << 1; break;
-        case '8': brailleBits |= 1 << 2; break;
-        case '3': brailleBits |= 1 << 3; break;
-        case '6': brailleBits |= 1 << 4; break;
-        case '9': brailleBits |= 1 << 5; break;
+        case '2': brailleBits |= 1;   break;   // dot 1
+        case '5': brailleBits |= 2;   break;   // dot 2
+        case '8': brailleBits |= 4;   break;   // dot 3
+        case '3': brailleBits |= 8;   break;   // dot 4
+        case '6': brailleBits |= 16;  break;   // dot 5
+        case '9': brailleBits |= 32;  break;   // dot 6
 
         case '*': // space
             insertSpaceAtCursor();
@@ -527,7 +555,7 @@ void handleKeyPress(char key) {
 
         case '#': { // braille -> char
             String out = brailleToChar(brailleBits);
-            Serial.print("BrailleBits: "); Serial.print(out); Serial.print(" "); Serial.println(brailleBits, BIN);
+            Serial.print("BrailleBits: "); Serial.print(out); Serial.print(" "); Serial.print(brailleBits, DEC); Serial.print(" "); Serial.println(brailleBits, BIN);
             if (out != "") {
                 for (int i = 0; i < out.length(); ++i) insertAtCursor(out[i]);
             }

@@ -10,8 +10,11 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Braille to English System
 - [x] Mode functions `(AUTO, TEXT, SPECIAL, NUMBER)`
 - [x] Capitalization Marker `dot6`
-- [x] Number trigger `dot3 + dot4 + dot5 + dot6`
-- [x] Special character trigger `dot4 + dot5 + dot6`
+- [x] Number sign `dot3 + dot4 + dot5 + dot6`
+- [x] Special character sign `dot4 + dot5 + dot6`
+- [x] Text sign `dot5 + dot6`
+- [ ] Italic sign/double italic sign
+- [x] Termination sign
 - [x] Sliding text
 - [x] Uncontracted braille
 - [x] Contracted braille
@@ -23,6 +26,8 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Save string to memory
 - [x] Load string from memory
 - [x] Hold button to trigger hold
+
+
 - [ ] Way to know the battery status and indicate it
 
 ## Todo: Prototype Hardware/Design
