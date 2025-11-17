@@ -211,7 +211,7 @@ String brailleToChar(byte bits) {
   } else if (currentMode == NUMBER) {
     char n = brailleToNumber(pattern);
     if (n != '?') out = String(n);
-    else {
+    /*else {
       // fallback to text or special
       char s = specialFromBraille(pattern);
       if (s != '0') out = String(s);
@@ -221,7 +221,7 @@ String brailleToChar(byte bits) {
       numberLock = false;
       nextNumber = false;
       numPressedOnce = false;
-    }
+    }*/
   }
 
   // Apply capitalization
@@ -422,7 +422,9 @@ void loop() {
     case '*': // space
       insertSpaceAtCursor();
       // reset transient modes
-      currentMode = TEXT;
+      if (currentMode = AUTO) {
+        currentMode = TEXT;
+      }
       capsLock = false;
       nextCapital = false;
       nextNumber = false;
@@ -431,7 +433,12 @@ void loop() {
 
     case '#': { // convert braille cell -> output string and insert
       String out = brailleToChar(brailleBits);
-      Serial.print("BrailleBits: "); Serial.println(brailleBits, BIN);
+      Serial.print("BrailleBits: "); Serial.print(out); Serial.print(" "); Serial.println(brailleBits, BIN);
+      if (out == "") { 
+          brailleBits = 0;
+          break;
+      }
+
       if (out != "") {
         for (int i = 0; i < out.length(); ++i) {
           insertAtCursor(out[i]);
