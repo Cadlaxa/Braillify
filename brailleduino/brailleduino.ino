@@ -1,5 +1,6 @@
 #include <Keypad.h>
 #include <LiquidCrystal_I2C.h>
+#include <EEPROM.h>
 
 // LCD setup (I2C)
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -15,26 +16,39 @@ char keys[ROWS][COLS] = {
 };
 byte rowPins[ROWS] = {9,8,7,6};
 byte colPins[COLS] = {5,4,3,2};
-
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
-// Braille variables
+// EEPROM settings
+const int EEPROM_ADDR = 0;       // starting address
+const int MAX_CHARS = 16;       // we save a single 16-char line
+
+// Braille / editor state
 byte brailleBits = 0;
-int cursorPos = 0;
+int cursorPos = 0;           // index inside fullBuffer (0..fullBuffer.length)
+String fullBuffer = "";      // full text buffer (can be longer than 16)
+int windowStart = 0;         // left-most index shown on LCD
 bool nextCapital = false;
 bool capsLock = false;
 bool nextNumber = false;
 bool numberLock = false;
 bool dot6PressedOnce = false;
-int indicatorLength = 0;
 bool numPressedOnce = false;
-String line2 = "";
-int windowStart = 0;
+int indicatorLength = 0;
 
 enum Mode { AUTO, TEXT, NUMBER, SPECIAL };
 Mode currentMode = AUTO;
 
-// Reorder bits to standard braille positions
+// contraction arrays (kept for possible future use)
+const uint8_t contractionKeys[] = {
+  0b110011, 0b000010, 0b000110, 0b010010, 0b110010,
+  0b010110, 0b110110, 0b100110, 0b110100, 0b001100
+};
+const char* contractionValues[] = {
+  "ou","ea","bb","cc","dd","ff","gg","in","by","st"
+};
+const int contractionCount = sizeof(contractionKeys)/sizeof(contractionKeys[0]);
+
+// ---------- Utility: reorder bits (keeps API consistent) ----------
 byte reorderBraille(byte bits) {
   byte pattern = 0;
   if (bits & (1 << 0)) pattern |= 1 << 0;
@@ -46,28 +60,27 @@ byte reorderBraille(byte bits) {
   return pattern;
 }
 
-// Special characters
+// ---------- Special & mapping functions ----------
 char specialFromBraille(byte p) {
   switch(p) {
     case 0b100110: return '?';
-    case 0b10110: return '!';
+    case 0b10110:  return '!';
     case 0b101111: return '&';
-    case 0b10: return ',';
+    case 0b10:     return ',';
     case 0b100100: return '_';
     case 0b110010: return '.';
-    case 0b110: return ';';
-    case 0b10010: return ':';
-    case 0b110100: return '“';
-    case 0b110110: return '( )';
-    case 0b1100: return '/';
+    case 0b110:    return ';';
+    case 0b10010:  return ':';
+    case 0b110100: return '"';
+    case 0b110110: return ')';
+    case 0b1100:   return '/';
     case 0b101100: return '@';
-    case 0b10100: return '*';
-    case 0b100: return '\'';
+    case 0b10100:  return '*';
+    case 0b100:    return '\''; 
     default: return '0';
   }
 }
 
-// Braille to text
 String brailleToText(byte b) {
   switch(b) {
     case 0b1: return "a";
@@ -97,27 +110,26 @@ String brailleToText(byte b) {
     case 0b111101: return "y";
     case 0b110101: return "z";
 
+    // contractions / common words
     case 0b101111: return "and";
     case 0b111111: return "for";
     case 0b110111: return "of";
     case 0b101110: return "the";
     case 0b111110: return "with";
     case 0b100001: return "ch";
-    case 0b100011: return "gh"; 
+    case 0b100011: return "gh";
     case 0b101001: return "sh";
     case 0b111001: return "th";
     case 0b110001: return "wh";
     case 0b101011: return "ed";
     case 0b111011: return "er";
-    
     case 0b101010: return "ow";
     case 0b100010: return "en";
     case 0b011100: return "ar";
   }
-  return "~";
+  return "~"; // sentinel for not a text letter
 }
 
-// Braille numbers
 char brailleToNumber(byte b) {
   switch(b) {
     case 0b000001: return '1';
@@ -134,107 +146,86 @@ char brailleToNumber(byte b) {
   return '?';
 }
 
-// Convert braille bits to a character or string
+// ---------- Core convert (braille cell -> output string) ----------
 String brailleToChar(byte bits) {
   byte pattern = reorderBraille(bits);
   String out = "";
 
-  // CAPITALIZATION SYSTEM
+  // CAPITALIZATION DOT6
   if (pattern == 0b100000) {
     if (dot6PressedOnce) {
       capsLock = true;
       nextCapital = false;
       dot6PressedOnce = false;
-      lcd.setCursor(cursorPos, 1);
-      lcd.print("^");
-      indicatorLength = 2;
-      cursorPos++;
-      if (cursorPos > 15) cursorPos = 15;
+      showTempIndicator('^', 2);
       return "";
     } else {
       dot6PressedOnce = true;
       nextCapital = true;
-      lcd.setCursor(cursorPos, 1);
-      lcd.print("^");
-      indicatorLength = 1;
-      cursorPos++;
-      if (cursorPos > 15) cursorPos = 15;
+      showTempIndicator('^', 1);
       return "";
     }
   }
   if (pattern != 0b100000) dot6PressedOnce = false;
 
-  // NUMBER SYSTEM TRIGGER
+  // NUMBER TRIGGER (dot3+4+5+6) -> 0b111100
   if (pattern == 0b111100) {
     if (numPressedOnce) {
       numberLock = true;
       nextNumber = false;
       numPressedOnce = false;
-      lcd.setCursor(cursorPos, 1);
-      lcd.print("#");
-      indicatorLength = 2;
-      cursorPos++;
-      if (cursorPos > 15) cursorPos = 15;
+      showTempIndicator('#', 2);
       return "";
     } else {
       numPressedOnce = true;
       nextNumber = true;
       numberLock = false;
-      lcd.setCursor(cursorPos, 1);
-      lcd.print("#");
-      indicatorLength = 1;
-      cursorPos++;
-      if (cursorPos > 15) cursorPos = 15;
+      showTempIndicator('#', 1);
       return "";
     }
   }
   if (pattern != 0b111100) numPressedOnce = false;
 
-  // Trigger number mode
-  if (nextNumber || numberLock || numPressedOnce) {
+  if (nextNumber || numberLock) {
     currentMode = NUMBER;
     nextNumber = false;
     clearTempIndicator();
   }
 
-  // Auto mode detection
+  // AUTO detection
   if (currentMode == AUTO && pattern != 0) {
     if (brailleToText(pattern) != "~") currentMode = TEXT;
     else if (specialFromBraille(pattern) != '0') currentMode = SPECIAL;
     else if (brailleToNumber(pattern) != '?') currentMode = NUMBER;
   }
 
-  // Process by mode
-  switch(currentMode) {
-    case TEXT: {
+  // Choose output based on mode
+  if (currentMode == TEXT) {
+    char s = specialFromBraille(pattern);
+    if (s != '0') out = String(s);
+    else out = brailleToText(pattern);
+  } else if (currentMode == SPECIAL) {
+    char s = specialFromBraille(pattern);
+    if (s != '0') out = String(s);
+    else out = brailleToText(pattern);
+  } else if (currentMode == NUMBER) {
+    char n = brailleToNumber(pattern);
+    if (n != '?') out = String(n);
+    else {
+      // fallback to text or special
       char s = specialFromBraille(pattern);
       if (s != '0') out = String(s);
       else out = brailleToText(pattern);
-      break;
-    }
-    case SPECIAL: {
-      char s = specialFromBraille(pattern);
-      if (s != '0') out = String(s);
-      else out = brailleToText(pattern);
-      break;
-    }
-    case NUMBER: {
-      char n = brailleToNumber(pattern);
-      if (n != '?') out = String(n);
-      else {
-        char s = specialFromBraille(pattern);
-        if (s != '0') out = String(s);
-        else out = brailleToText(pattern);
-        currentMode = TEXT;
-        numberLock = false;
-        nextNumber = false;
-        numPressedOnce = false;
-      }
-      break;
+      // exit number mode
+      currentMode = TEXT;
+      numberLock = false;
+      nextNumber = false;
+      numPressedOnce = false;
     }
   }
 
-  if (nextCapital || capsLock) {
+  // Apply capitalization
+  if ((nextCapital || capsLock) && out.length() > 0) {
     out.toUpperCase();
     nextCapital = false;
     clearTempIndicator();
@@ -243,90 +234,173 @@ String brailleToChar(byte bits) {
   return out;
 }
 
-// Clear temporary indicator
-void clearTempIndicator() {
-  if (indicatorLength > 0) {
-    lcd.setCursor(cursorPos - indicatorLength, 1);
-    for (int i = 0; i < indicatorLength; i++) lcd.print(" ");
-    cursorPos -= indicatorLength;
-    indicatorLength = 0;
+// ---------- Temp indicator helpers ----------
+void showTempIndicator(char ch, int len) {
+  lcd.setCursor(getLcdCursor(), 1);
+  for (int i = 0; i < len && getLcdCursor() + i < 16; i++) {
+    lcd.print(ch);
   }
+  indicatorLength = len;
+  int newCursor = getLcdCursor() + len;
+  if (newCursor > 15) newCursor = 15;
+  lcd.setCursor(newCursor, 1);
 }
 
-// Update top LCD line with mode
+// Clear the temporary indicator (erase spaces where indicator was)
+void clearTempIndicator() {
+  if (indicatorLength <= 0) return;
+  int lcdCur = getLcdCursor();
+  int start = lcdCur - indicatorLength;
+  if (start < 0) start = 0;
+  lcd.setCursor(start, 1);
+  for (int i = 0; i < indicatorLength; i++) lcd.print(' ');
+  lcd.setCursor(start, 1);
+  indicatorLength = 0;
+}
+
+// ---------- Editor display & buffer helpers ----------
+int getLcdCursor() {
+  int lcdCursor = cursorPos - windowStart;
+  if (lcdCursor < 0) lcdCursor = 0;
+  if (lcdCursor > 15) lcdCursor = 15;
+  return lcdCursor;
+}
+
+void scrollWindow() {
+  if (cursorPos < windowStart) windowStart = cursorPos;
+  if (cursorPos >= windowStart + 16) windowStart = cursorPos - 15;
+  // keep windowStart >= 0
+  if (windowStart < 0) windowStart = 0;
+}
+
+void redrawLCDLine() {
+  lcd.setCursor(0,1);
+  String visible;
+  if (fullBuffer.length() <= windowStart) {
+    visible = "";
+  } else {
+    int end = windowStart + 16;
+    if (end > fullBuffer.length()) end = fullBuffer.length();
+    visible = fullBuffer.substring(windowStart, end);
+  }
+  lcd.print(visible);
+  for (int i = visible.length(); i < 16; i++) lcd.print(' ');
+  int lcdCursor = getLcdCursor();
+  lcd.setCursor(lcdCursor, 1);
+}
+
+// insert a char at cursorPos
+void insertAtCursor(char c) {
+  fullBuffer = fullBuffer.substring(0, cursorPos) + String(c) + fullBuffer.substring(cursorPos);
+  cursorPos++;
+  scrollWindow();
+  redrawLCDLine();
+}
+
+// backspace (remove char before cursorPos)
+void backspaceAtCursor() {
+  if (cursorPos == 0) return;
+  fullBuffer = fullBuffer.substring(0, cursorPos - 1) + fullBuffer.substring(cursorPos);
+  cursorPos--;
+  if (windowStart > 0 && cursorPos < windowStart) windowStart--;
+  scrollWindow();
+  redrawLCDLine();
+}
+
+// insert space at cursor
+void insertSpaceAtCursor() {
+  insertAtCursor(' ');
+}
+
+// move cursor left/right
+void moveCursorLeft() {
+  if (cursorPos > 0) cursorPos--;
+  scrollWindow();
+  redrawLCDLine();
+}
+void moveCursorRight() {
+  if (cursorPos < fullBuffer.length()) cursorPos++;
+  scrollWindow();
+  redrawLCDLine();
+}
+
+// Cycle modes (0 key)
+void cycleMode() {
+  if (currentMode == AUTO) currentMode = TEXT;
+  else if (currentMode == TEXT) currentMode = SPECIAL;
+  else if (currentMode == SPECIAL) currentMode = NUMBER;
+  else currentMode = AUTO;
+  updateLCDMode();
+}
+
+// update top-line mode display
 void updateLCDMode() {
   lcd.setCursor(0,0);
   switch(currentMode) {
-    case AUTO: lcd.print("Mode: AUTO       "); break;
-    case TEXT: lcd.print("Mode: Text       "); break;
-    case NUMBER: lcd.print("Mode: Number     "); break;
+    case AUTO:    lcd.print("Mode: AUTO       "); break;
+    case TEXT:    lcd.print("Mode: Text       "); break;
+    case NUMBER:  lcd.print("Mode: Number     "); break;
     case SPECIAL: lcd.print("Mode: Special    "); break;
   }
 }
 
-// Insert character at cursor
-void insertChar(char c) {
-  line2 = line2.substring(0, cursorPos) + c + line2.substring(cursorPos);
-  cursorPos++;
+// ---------- EEPROM save/load ----------
+void saveLineToEEPROM() {
+  for (int i = 0; i < MAX_CHARS; ++i) {
+    char c = (i < fullBuffer.length()) ? fullBuffer[i] : ' ';
+    EEPROM.write(EEPROM_ADDR + i, (uint8_t)c);
+  }
+  // write a marker byte after the data to indicate saved data exists (optional)
+  EEPROM.write(EEPROM_ADDR + MAX_CHARS, 0xA5);
+  lcd.setCursor(0,0);
+  lcd.print("Saved to MEMORY ");
+  delay(1000);
+  updateLCDMode();
+}
+
+void loadLineFromEEPROM() {
+  uint8_t marker = EEPROM.read(EEPROM_ADDR + MAX_CHARS);
+  if (marker != 0xA5) {
+    fullBuffer = "";
+    return;
+  }
+  fullBuffer = "";
+  for (int i = 0; i < MAX_CHARS; ++i) {
+    char c = (char)EEPROM.read(EEPROM_ADDR + i);
+    fullBuffer += c;
+  }
+  while (fullBuffer.length() > 0 && fullBuffer[fullBuffer.length()-1] == ' ') fullBuffer.remove(fullBuffer.length()-1);
+  cursorPos = fullBuffer.length();
+  windowStart = 0;
+  lcd.setCursor(0,0);
+  lcd.print("Load from MEMORY");
+  delay(1000);
+  updateLCDMode();
   scrollWindow();
-  redrawLCD();
+  redrawLCDLine();
 }
 
-// Backspace character before cursor
-void backspaceChar() {
-  if (cursorPos == 0) return;
-  line2 = line2.substring(0, cursorPos - 1) + line2.substring(cursorPos);
-  cursorPos--;
-  if (windowStart > 0 && cursorPos < windowStart) windowStart--;
+void startUP() {
+  lcd.setCursor(0,0);
+  lcd.print("  BrailleDuino  ");
+  delay(2000);
+  updateLCDMode();
   scrollWindow();
-  redrawLCD();
+  redrawLCDLine();
 }
 
-// Insert space at cursor
-void insertSpace() {
-  insertChar(' ');
-}
-
-// Keep cursor visible in window
-void scrollWindow() {
-  if (cursorPos < windowStart) windowStart = cursorPos;
-  if (cursorPos >= windowStart + 16) windowStart = cursorPos - 15;
-}
-
-// Redraw LCD line and cursor
-void redrawLCD() {
-  lcd.setCursor(0,1);
-  String display = line2.substring(windowStart, min(windowStart + 16, line2.length()));
-  lcd.print(display);
-  for (int i = display.length(); i < 16; i++) lcd.print(" ");
-  int lcdCursor = cursorPos - windowStart;
-  if (lcdCursor < 0) lcdCursor = 0;
-  if (lcdCursor > 15) lcdCursor = 15;
-  lcd.setCursor(lcdCursor, 1);
-}
-
-// Move cursor left
-void moveCursorLeft() {
-  if (cursorPos > 0) cursorPos--;
-  scrollWindow();
-  redrawLCD();
-}
-
-// Move cursor right
-void moveCursorRight() {
-  if (cursorPos < line2.length()) cursorPos++;
-  scrollWindow();
-  redrawLCD();
-}
-
+// ---------- Arduino setup/loop ----------
 void setup() {
   lcd.init();
   lcd.backlight();
   lcd.clear();
+
+  startUP();
+
   updateLCDMode();
-  lcd.setCursor(0, 1);
-  lcd.cursor(); 
-  lcd.blink();   
+  lcd.setCursor(getLcdCursor(), 1);
+  lcd.cursor();
+  lcd.blink();
   Serial.begin(9600);
 }
 
@@ -335,14 +409,9 @@ void loop() {
   if (!key) return;
 
   switch(key) {
-    case '0':
-      if (currentMode == AUTO) currentMode = TEXT;
-      else if (currentMode == TEXT) currentMode = SPECIAL;
-      else if (currentMode == SPECIAL) currentMode = NUMBER;
-      else if (currentMode == NUMBER) currentMode = AUTO;
-      updateLCDMode();
-      break;
+    case '0': cycleMode(); break;
 
+    // dots -> set bits (these map to keypad numbers you've used)
     case '2': brailleBits |= 1 << 0; break;
     case '5': brailleBits |= 1 << 1; break;
     case '8': brailleBits |= 1 << 2; break;
@@ -350,26 +419,46 @@ void loop() {
     case '6': brailleBits |= 1 << 4; break;
     case '9': brailleBits |= 1 << 5; break;
 
-    case '*': 
-      insertSpace(); 
-      currentMode = TEXT; 
-      capsLock = false; 
-      nextCapital = false; 
-      nextNumber = false; 
-      numberLock = false; 
+    case '*': // space
+      insertSpaceAtCursor();
+      // reset transient modes
+      currentMode = TEXT;
+      capsLock = false;
+      nextCapital = false;
+      nextNumber = false;
+      numberLock = false;
       break;
 
-    case '#': {
+    case '#': { // convert braille cell -> output string and insert
       String out = brailleToChar(brailleBits);
-      Serial.print("Braille Bits: "); Serial.println(brailleBits, BIN);
+      Serial.print("BrailleBits: "); Serial.println(brailleBits, BIN);
       if (out != "") {
-        for (int i = 0; i < out.length(); i++) insertChar(out[i]);
+        for (int i = 0; i < out.length(); ++i) {
+          insertAtCursor(out[i]);
+        }
       }
       brailleBits = 0;
-    } break;
+      break;
+    }
 
-    case 'D': backspaceChar(); break;
+    case 'D': // backspace
+      backspaceAtCursor();
+      break;
+
     case '7': moveCursorLeft(); break;
     case 'C': moveCursorRight(); break;
+
+    case 'A': // ENTER / SAVE to EEPROM
+      saveLineToEEPROM();
+      break;
+    
+    case 'B': // ENTER / SAVE to EEPROM
+      loadLineFromEEPROM();
+      break;
+
+    default:
+      break;
   }
+
+  lcd.setCursor(getLcdCursor(), 1);
 }

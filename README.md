@@ -18,7 +18,10 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Insert/delete function
 - [ ] Accent markers
 - [ ] Context based punctuation markers
-- [ ] 5th sequence and other contractions 
+- [x] 5th sequence and other contractions 
+- [x] Save string to memory
+- [x] Load string from memory
+- [ ] Hold button to trigger hold
 
 ## Bugs
 - Number trigger placement in other position doesn't add to the cursor position
@@ -30,5 +33,7 @@ Braille to Text device for deciphering braille system to readable text format
 - **`Backspace symbol`** = delete character
 - **`Space symbol`** = add space
 - **`Enter symbol`** = inputs the braille pattern into readable symbol `(text, number, special symbols)`
+- **`Yellow S`** = Save string to memory
+- **`Yellow L`** = Load string from memory
 - **`Blue buttons`** = no functions yet
 <img width="640" height="480" alt="New Project 82" src="https://github.com/user-attachments/assets/45646331-ddb0-418d-9a02-657105d680de" />
