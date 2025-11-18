@@ -17,6 +17,9 @@ char keys[ROWS][COLS] = {
 byte rowPins[ROWS] = {9,8,7,6};
 byte colPins[COLS] = {5,4,3,2};
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+const int buzzerPin = 10;
+unsigned long lastBeep = 0;
+const unsigned long debounceMillis = 35;
 
 // EEPROM settings
 const int EEPROM_ADDR = 0;       // starting address
@@ -438,6 +441,7 @@ void saveLineToEEPROM() {
   EEPROM.write(EEPROM_ADDR + MAX_CHARS, 0xA5);
   lcd.setCursor(0,0);
   lcd.print("Saved to MEMORY ");
+  saveTone();
   delay(1000);
   updateLCDMode();
 }
@@ -458,6 +462,7 @@ void loadLineFromEEPROM() {
   windowStart = 0;
   lcd.setCursor(0,0);
   lcd.print("Load from MEMORY");
+  loadTone();
   delay(1000);
   updateLCDMode();
   scrollWindow();
@@ -467,6 +472,7 @@ void loadLineFromEEPROM() {
 void startUP() {
   lcd.setCursor(0,0);
   lcd.print("  BrailleDuino  ");
+  startupTone();
   delay(2000);
   updateLCDMode();
   scrollWindow();
@@ -475,6 +481,7 @@ void startUP() {
 
 // ---------- Arduino setup/loop ----------
 void setup() {
+  pinMode(buzzerPin, OUTPUT);
   lcd.init();
   lcd.backlight();
   lcd.clear();
@@ -488,6 +495,57 @@ void setup() {
   lcd.blink();
   Serial.begin(9600);
 }
+
+void sound(int freq) {
+  unsigned long now = millis();
+  if (now - lastBeep >= debounceMillis) {
+    tone(buzzerPin, freq, 60);
+    lastBeep = now;
+  }
+}
+
+void startupTone() {
+  tone(buzzerPin, 1500, 120);
+  delay(150);
+  tone(buzzerPin, 2000, 120);
+  delay(150);
+  tone(buzzerPin, 2500, 160);
+  delay(200);
+}
+void saveTone() {
+  tone(buzzerPin, 2000, 60);
+  delay(200);
+  tone(buzzerPin, 2400, 60);
+  delay(200);
+  tone(buzzerPin, 2800, 80);
+  delay(300);
+}
+void loadTone() {
+  tone(buzzerPin, 2800, 60); 
+  delay(200);
+  tone(buzzerPin, 2400, 60);
+  delay(200);
+  tone(buzzerPin, 2000, 80);
+  delay(300);
+}
+void enterTone() {
+  sound(1600); 
+  delay(100);
+  sound(1600);
+  delay(100);
+}
+void modeTone() {
+  tone(buzzerPin, 2000, 120);
+  delay(150);
+  tone(buzzerPin, 2500, 160);
+  delay(300);
+}
+#define C 2093
+#define D 2349
+#define E 2637
+#define F 2794
+#define G 3136
+#define A 3520
 
 char getHeldKey() {
   for (byte r = 0; r < ROWS; r++) {
@@ -518,6 +576,35 @@ void loop() {
           keyPressTime = now;
           nextRepeatTime = now + holdDelay;
           handleKeyPress(key);
+            switch (key) {
+              case '2':
+                sound(C);
+                break;
+              case '5':
+                sound(D);
+                break;
+              case '8':
+                sound(E);
+                break;
+              case '3':
+                sound(F);
+                break;
+              case '6':
+                sound(G);
+                break;
+              case '9':
+                sound(A);
+                break;
+            }
+          if (key == '#') {
+            enterTone();
+          } else if (key == '*' || key == '7' || key == 'C') {
+            sound(1800);
+          } else if (key == 'D') {
+            sound(2100);
+          } else if (key == '0') {
+            modeTone();
+          }
       } else if (now >= nextRepeatTime) {
           // only repeat these keys
           if (key == '*' || key == 'D' || key == '7' || key == 'C') {

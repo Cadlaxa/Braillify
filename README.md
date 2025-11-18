@@ -35,6 +35,7 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] LCD I2C
 - [x] Keypad membrane
 - [x] Wire connectors
+- [x] Passive buzzer
 - [ ] Battery
 - [ ] Blueetooth module
 - [ ] Casing
