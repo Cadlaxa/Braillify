@@ -1,6 +1,8 @@
 #include <Keypad.h>
 #include <LiquidCrystal_I2C.h>
 #include <EEPROM.h>
+#include <avr/pgmspace.h>
+#include <Arduino.h>
 
 // LCD setup (I2C)
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -23,7 +25,7 @@ const unsigned long debounceMillis = 35;
 
 // EEPROM settings
 const int EEPROM_ADDR = 0;       // starting address
-const int MAX_CHARS = 16;       // we save a single 16-char line
+const int MAX_CHARS = 128;       // we save a single 128-char line
 
 // Braille / editor state
 byte brailleBits = 0;
@@ -47,6 +49,10 @@ bool textLock = false;
 bool textPressedOnce = false;
 int indicatorLength = 0;
 
+#define MAX_BUFFER 128
+byte fullBufferBraille[MAX_BUFFER];  // parallel array to store braille cells
+byte contractionPrefix = 0;
+
 char lastKey = NO_KEY;
 unsigned long keyPressTime = 0; // when key was first pressed
 const unsigned long holdDelay = 800; // ms to wait before auto-repeat
@@ -58,103 +64,60 @@ Mode currentMode = AUTO;
 
 
 // ---------- Special & mapping functions ----------
-char specialFromBraille(byte p) {
-  switch(p) {
-    case 38: return '?';
-    case 22: return '!';
-    case 47: return '&';
-    case 2:  return ',';
-    case 36: return '_';
-    case 50: return '.';
-    case 6:  return ';';
-    case 18: return ':';
-    case 52: return '"';
-    case 54: return ')'; 
-    case 12: return '/';
-    case 44: return '@';
-    case 20: return '*';
-    case 4:  return '\'';
-
-    default: return '0';
+const char specialOutput[][8] PROGMEM = {
+  {"?"}, {"!"}, {"&"}, {","}, {"_"}, {"."}, {";"}, {":"}, {"\""}, {"()"},
+  {"/"}, {"@"}, {"*"}, {"\'"}, {"cannot"}, {"had"}, {"many"}, {"spirit"}, 
+  {"their"}, {"world"}
+};
+const byte specialDots[] PROGMEM = {
+  38,22,47,2,36,50,6,18,52,54,12,44,20,4,9,19,13,14,46,58
+};
+String specialFromBraille(byte p) {
+  for (int i=0;i<20;i++){
+    if (p == pgm_read_byte(&specialDots[i])) {
+      char buf[7];
+      strcpy_P(buf, specialOutput[i]);
+      return String(buf);
+    }
   }
+  return "0";
 }
 
+
+const byte brailleDotsTable[] PROGMEM = {
+  1,3,9,25,17,11,27,19,10,26,5,7,13,29,21,15,31,23,14,30,37,39,58,45,61,53,
+  47,63,55,46,62,33,35,41,57,49,43,59,42,34,28,51,2,6,18,50,22,54,38,52,12,44,16
+};
+
+const char brailleTextTable[][7] PROGMEM = {
+  "a","b","c","d","e","f","g","h","i","j",
+  "k","l","m","n","o","p","q","r","s","t",
+  "u","v","w","x","y","z",
+  "and","for","of","the","with",
+  "ch","gh","sh","th","wh","ed","er","ow","en","ar",
+  "ou","ea","bb","cc","dd","ff","gg","in","by","st","ing",">"
+};
 String brailleToText(byte b) {
-  switch(b) {
-    case 1: return "a";
-    case 3: return "b";
-    case 9: return "c";
-    case 25: return "d";
-    case 17: return "e";
-    case 11: return "f";
-    case 27: return "g";
-    case 19: return "h";
-    case 10: return "i";
-    case 26: return "j";
-    case 5: return "k"; 
-    case 7: return "l";
-    case 13: return "m";
-    case 29: return "n";
-    case 21: return "o";
-    case 15: return "p";
-    case 31: return "q";
-    case 23: return "r";
-    case 14: return "s";
-    case 30: return "t";
-    case 37: return "u";
-    case 39: return "v";
-    case 58: return "w";
-    case 45: return "x";
-    case 61: return "y";
-    case 53: return "z";
-
-    // contractions / common words
-    case 47: return "and";
-    case 63: return "for";
-    case 55: return "of";
-    case 46: return "the";
-    case 62: return "with";
-    case 33: return "ch";
-    case 35: return "gh";
-    case 41: return "sh";
-    case 57: return "th";
-    case 49: return "wh";
-    case 43: return "ed";
-    case 59: return "er";
-    case 42: return "ow";
-    case 34: return "en";
-    case 28: return "ar";
-
-    case 51: return "ou";
-    case 2: return "ea";
-    case 6: return "bb";
-    case 18: return "cc";
-    case 50: return "dd";
-    case 22: return "ff";
-    case 54: return "gg";
-    case 38: return "in";
-    case 52: return "by";
-    case 12: return "st";
-    case 44: return "ing";
+  for (int i = 0; i < sizeof(brailleDotsTable); i++) {
+    if (b == pgm_read_byte(&brailleDotsTable[i])) {
+      char buf[8];
+      strcpy_P(buf, brailleTextTable[i]);
+      return String(buf);
+    }
   }
   return "~";
 }
 
+const byte brailleNumDots[] PROGMEM = {1,3,9,25,17,11,27,19,10,26};
+const char brailleNumChars[] PROGMEM = {'1','2','3','4','5','6','7','8','9','0'};
 char brailleToNumber(byte b) {
-  switch(b) {
-    case 1: return '1';
-    case 3: return '2';
-    case 9: return '3';
-    case 25: return '4';
-    case 17: return '5';
-    case 11: return '6';
-    case 27: return '7';
-    case 19: return '8';
-    case 10: return '9'; 
-    case 26: return '0';
+  for (int i=0;i<10;i++){
+    if (b == pgm_read_byte(&brailleNumDots[i]))
+      return pgm_read_byte(&brailleNumChars[i]);
   }
   return '?';
 }
+
 
 // ---------- Core convert (braille cell -> output string) ----------
 String brailleToChar(byte bits) {
@@ -261,7 +224,7 @@ String brailleToChar(byte bits) {
   if (currentMode == TEXT) {
       out = brailleToText(pattern);
       if (out == "~") {
-          char s = specialFromBraille(pattern);
+          String s = specialFromBraille(pattern);
           if (s != '0') {
               out = String(s);
               currentMode = SPECIAL;  // switch to special
@@ -279,7 +242,7 @@ String brailleToChar(byte bits) {
           }
       }
   } else if (currentMode == SPECIAL) {
-      char s = specialFromBraille(pattern);
+      String s = specialFromBraille(pattern);
       if (s != '0') {
           out = String(s);
       } else {
@@ -293,7 +256,7 @@ String brailleToChar(byte bits) {
       } 
       else {
           // Fallback to special
-          char s = specialFromBraille(pattern);
+          String s = specialFromBraille(pattern);
           if (s != '0') out = String(s);
           else out = brailleToText(pattern);
           // exit number mode after fallback
@@ -377,12 +340,25 @@ void redrawLCDLine() {
 }
 
 // insert a char at cursorPos
-void insertAtCursor(char c) {
-  fullBuffer = fullBuffer.substring(0, cursorPos) + String(c) + fullBuffer.substring(cursorPos);
-  cursorPos++;
-  scrollWindow();
-  redrawLCDLine();
+void insertAtCursor(char c, byte brailleCell = 0) {
+    if (fullBuffer.length() >= MAX_BUFFER) return;
+
+    // Insert char into string
+    fullBuffer = fullBuffer.substring(0, cursorPos) + c + fullBuffer.substring(cursorPos);
+
+    // Shift braille tracking array safely
+    for (int i = fullBuffer.length() - 1; i > cursorPos; i--) {
+        fullBufferBraille[i] = fullBufferBraille[i - 1];
+    }
+
+    fullBufferBraille[cursorPos] = brailleCell;
+
+    cursorPos++;
+
+    scrollWindow();
+    redrawLCDLine();
 }
+
 
 // backspace (remove char before cursorPos)
 void backspaceAtCursor() {
@@ -467,6 +443,292 @@ void loadLineFromEEPROM() {
   updateLCDMode();
   scrollWindow();
   redrawLCDLine();
+}
+
+struct UEBContraction {
+    byte prefixDots;
+    const char letters[8];
+    const char contraction[16];
+};
+
+const UEBContraction uebContractions[] PROGMEM = {
+  {0, "ab", "about"},
+  {0, "abv", "above"},
+  {0, "acc", "according"},
+  {0, "acr", "across"},
+  {0, "adm", "administration"},
+  {0, "af", "after"},
+  {0, "afn", "afternoon"},
+  {0, "afw", "afterward"},
+  {0, "ag", "again"},
+  {12, "agst", "against"},
+  {0, "alm", "almost"},
+  {0, "alr", "already"},
+  {57, "alth", "although"},
+  {0, "altg", "altogether"},
+  {0, "alw", "always"},
+  {0, " z", " as"},
+
+  {6, "bb", "be"},
+  {6, "bbc", "because"},
+  {6, "bbf", "before"},
+  {6, "bbh", "behind"},
+  {6, "bbl", "below"},
+  {6, "bbn", "beneath"},
+  {6, "bbs", "beside"},
+  {6, "bbt", "between"},
+  {6, "bby", "beyond"},
+  {0, "bl", "blind"},
+  {0, "brl", "braille"},
+  {0, " b", " but"},
+
+  {0, " c", " can"},
+  {16, ">ch", "character"},
+  {33, " ch", " child"},
+  {33, "chn", "children"},
+  {18, "cccv", "conceive"},
+  {18, "cccvg", "conceiving"},
+  {0, "cd", "could"},
+
+  {16, ">d", "day"},
+  {0, "dcv", "deceive"},
+  {0, "dcvg", "deceiving"},
+  {0, "dcl", "declare"},
+  {0, "dclg", "declaring"},
+  {0, " d", " do"},
+
+  {0, "ei", "either"},
+  //{16, ">e", "ence"},
+  {34, " en", " enough"},
+  {16, ">e", "ever"},
+
+  {16, ">f", "father"},
+  {12, "fst", "first"},
+  {0, "fr", "friend"},
+  {0, " f", " from"},
+
+  {0, " g", " go"},
+  {0, "gd", "good"},
+  {0, "grt", "great"},
+
+  {0, " h", " have"},
+  {16, ">h", "here"},
+  {59, "herf", "herself"},
+  {0, "hmf", "himself"},
+  {38, " in", " his"}, // hmm
+
+  {0, "imm", "immediate"},
+  {0, " x", " it"},
+  {0, " xs", " its"},
+  {0, "xf", "itself"},
+
+  {0, " j", "just"},
+
+  {16, ">k", "know"},
+  {0, " k", " knowledge"},
+
+  {0, "lr", "letter"},
+  {0, " l", " like"},
+  {0, "ll", "little"},
+  {16, ">l", "lord"},
+
+  {0, " m", " more"},
+  {16, ">m", "mother"},
+  {33, "mch", "much"},
+  {12, "mst", "must"},
+  {0, "myf", "myself"},
+
+  {16, ">n", "name"},
+  {0, "nec", "necessary"},
+  {0, "nei", "neither"},
+  {0, " n", " not"},
+
+  {16, ">o", "one"},
+  {16, ">of", "oneself"},
+  {0, " m", " more"},
+  {51, " >ou", " ought"},
+  {40, "0d", "ound"},
+  {40, "0t", "ount"},
+  {51, "ourvs", "ourselves"},
+  {51, " ou", " out"},
+
+  {0, "pd", "paid"},
+  {0, " p", " people"},
+  {59, "percv", "perceive"},
+  {59, "percvg", "perceiving"},
+  {59, "perh", "perhaps"},
+
+  {16, ">q", "question"},
+  {0, "qk", "quick"},
+  {0, " q", " quite"},
+
+  {0, " r", " rather"},
+  {0, "rcv", "receive"},
+  {0, "rcvg", "receiving"},
+  {0, "rjc", "rejoice"},
+  {0, "rjcg", "rejoicing"},
+  {16, ">r", "right"},
+
+  {0, "sd", "said"},
+  {41, " sh", " shall"},
+  {0, " s", " so"},
+  {16, ">s", "some"},
+  {12, " st", " still"},
+  {33, "sch", "such"},
+
+  {0, " t", " that"},
+  {46, "themvs", "themselves"},
+  {16, ">the", "there"},
+  {57, " th", "this"},
+  {24, "0th", "those"},
+  {16, ">th", "through"},
+  {57, "thyf", "thyself"},
+  {16, ">t", "time"},
+  {0, "td", "today"},
+  {0, "tgr", "together"},
+  {0, "tm", "tomorrow"},
+  {0, "tn", "tonight"},
+
+  {16, ">u", "under"},
+  {0, " u", " us"},
+
+  {0, " v", " very"},
+
+  {52, " by", " was"},
+  {54, " gg", " were"},
+  {16, ">wh", "where"},
+  {49, " wh", " which"},
+  {0, " w", " will"},
+  {16, ">w", "work"},
+  {0, "wd", "would"},
+
+  {0, " y", " you"},
+  {16, ">y", "young"},
+  {0, "yr", "your"},
+  {0, "yrf", "yourself"},
+  {0, "yrvs", "yourselves"},
+};
+
+const int contractionCount = sizeof(uebContractions)/sizeof(uebContractions[0]);
+
+bool checkUEBContraction(const char* buffer, byte lastDots, char* bufferOut) {
+    int bufLen = strlen(buffer);
+    char letters[8];
+    char contraction[16];
+
+    for (int i = 0; i < contractionCount; i++) {
+        byte prefix = pgm_read_byte(&(uebContractions[i].prefixDots));
+        memcpy_P(letters, uebContractions[i].letters, 8);
+        letters[7] = '\0';
+        memcpy_P(contraction, uebContractions[i].contraction, 16);
+        contraction[15] = '\0';
+
+        int lettersLen = strlen(letters);
+        if (lettersLen <= bufLen) {
+            if (strncmp(buffer + bufLen - lettersLen, letters, lettersLen) == 0) {
+                if (prefix == 0 || prefix == lastDots) {
+                    strcpy(bufferOut, contraction);
+                    return true; // found
+                }
+            }
+        }
+    }
+    bufferOut[0] = '\0';
+    return false; // not found
+}
+
+int getContractionLength(const char* buffer, byte lastDots) {
+    int bufLen = strlen(buffer);
+    int longest = 0;
+
+    char letters[8];
+    for (int i = 0; i < contractionCount; i++) {
+        byte prefix = pgm_read_byte(&(uebContractions[i].prefixDots));
+        memcpy_P(letters, uebContractions[i].letters, 8);
+        letters[7] = '\0';
+
+        int lettersLen = strlen(letters);
+        if (lettersLen > bufLen) continue;
+
+        if (strncmp(buffer + bufLen - lettersLen, letters, lettersLen) == 0) {
+            if (prefix == 0 || prefix == lastDots) {
+                if (lettersLen > longest) longest = lettersLen;
+            }
+        }
+    }
+    return longest;
+}
+
+void applyContraction(char* buffer, int& bufLen, byte* brailleArr = nullptr, byte prefixPassed = 0, bool front = true) {
+    int bestLen = 0;
+    int bestIndex = -1;
+    char letters[8];
+
+    for (int i = 0; i < contractionCount; i++) {
+        byte prefix = pgm_read_byte(&(uebContractions[i].prefixDots));
+        memcpy_P(letters, uebContractions[i].letters, 8);
+        letters[7] = '\0';
+
+        int lettersLen = strlen(letters);
+        if (lettersLen == 0 || lettersLen > bufLen) continue;
+
+        // Check if the last letters match this contraction
+        if (strncmp(buffer + bufLen - lettersLen, letters, lettersLen) != 0) continue;
+
+        // Front contraction: check prefix passed
+        if (front) {
+            if (prefix != 0 && prefix != prefixPassed) continue;
+        } 
+        // End contraction: check last braille cell
+        else if (brailleArr) {
+            byte lastBrailleCell = brailleArr[bufLen - 1];
+            if (prefix != 0 && prefix != lastBrailleCell) continue;
+        }
+
+        if (lettersLen > bestLen) {
+            bestLen = lettersLen;
+            bestIndex = i;
+        }
+    }
+
+    if (bestIndex >= 0) {
+        char contraction[16];
+        memcpy_P(contraction, uebContractions[bestIndex].contraction, 16);
+        contraction[15] = '\0';
+        int contractionLen = strlen(contraction);
+
+        // If end contraction, clear braille cells of replaced letters
+        if (!front && brailleArr) {
+            for (int k = bufLen - bestLen; k < bufLen; k++) brailleArr[k] = 0;
+        }
+
+        // Replace letters with contraction
+        memcpy(buffer + bufLen - bestLen, contraction, contractionLen);
+        bufLen = bufLen - bestLen + contractionLen;
+        buffer[bufLen] = '\0';
+    }
+}
+
+void setFrontContraction(char* buffer, int& bufLen, byte prefixPassedToFunction) {
+    applyContraction(buffer, bufLen, nullptr, prefixPassedToFunction, true);
+}
+
+void setEndContraction(char* buffer, int& bufLen, byte* fullBufferBraille) {
+    applyContraction(buffer, bufLen, fullBufferBraille, 0, false);
+}
+
+void handleSpaceKeyDirect() {
+    char buf[128]; 
+    int bufLen = fullBuffer.length();
+    fullBuffer.toCharArray(buf, sizeof(buf));
+
+    setEndContraction(buf, bufLen, fullBufferBraille);
+    setFrontContraction(buf, bufLen, contractionPrefix);
+    
+    fullBuffer = String(buf);
+    scrollWindow();
+    redrawLCDLine();
+    cursorPos = fullBuffer.length();
 }
 
 void startUP() {
@@ -630,6 +892,7 @@ void handleKeyPress(char key) {
         case '9': brailleBits |= 32;  break;   // dot 6
 
         case '*': // space
+            handleSpaceKeyDirect();
             insertSpaceAtCursor();
             if (currentMode = AUTO) currentMode = TEXT;
             capsLock = false;
@@ -638,13 +901,24 @@ void handleKeyPress(char key) {
             numberLock = false;
             nextSpecial = false;
             specialLock = false;
+            contractionPrefix = 0;
             break;
 
         case '#': { // braille -> char
             String out = brailleToChar(brailleBits);
             Serial.print("BrailleBits: "); Serial.print(out); Serial.print(" "); Serial.print(brailleBits, DEC); Serial.print(" "); Serial.println(brailleBits, BIN);
             if (out != "") {
-                for (int i = 0; i < out.length(); ++i) insertAtCursor(out[i]);
+                if (fullBuffer.length() + out.length() >= MAX_BUFFER) {
+                    // Handle error or just ignore input
+                    brailleBits = 0;
+                    break;
+                }
+                if (fullBuffer.length() == 0 || fullBuffer.endsWith(" ")) {
+                    contractionPrefix = brailleBits;
+                }
+                for (int i = 0; i < out.length(); ++i) {
+                    insertAtCursor(out[i], brailleBits);
+                }
             }
             brailleBits = 0;
             break;

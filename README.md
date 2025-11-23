@@ -17,7 +17,7 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Termination sign
 - [x] Sliding text
 - [x] Uncontracted braille
-- [x] Contracted braille
+- [x] Contracted braille (semi and full words)
 - [ ] Send data to device (via blueetooth)
 - [x] Insert/delete function
 - [ ] Accent markers
@@ -26,8 +26,6 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Save string to memory
 - [x] Load string from memory
 - [x] Hold button to trigger hold
-
-
 - [ ] Way to know the battery status and indicate it
 
 ## Todo: Prototype Hardware/Design
