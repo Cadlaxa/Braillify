@@ -51,4 +51,4 @@ Braille to Text device for deciphering braille system to readable text format
 - **`Yellow S`** = Save string to memory
 - **`Yellow L`** = Load string from memory
 - **`Blue buttons`** = no functions yet
-<img width="640" height="480" alt="BrailleDuino beta keypad design" src="https://github.com/user-attachments/assets/5c2b1de3-8c59-4dbd-ac14-2a38999336c0" />
+<img width="640" height="480" alt="New Project 82-3" src="https://github.com/user-attachments/assets/c0fe0e74-5ca4-4a42-982e-658fd04875c1" />
