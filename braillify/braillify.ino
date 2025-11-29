@@ -397,7 +397,7 @@ void moveCursorLeft() {
   scrollWindow();
   redrawLCDLine();
   if (bluetoothEnabled && bleKeyboard.isConnected()) {
-      bleKeyboard.press(KEY_LEFT_ARROW);
+      bleKeyboard.write(KEY_LEFT_ARROW);
   }
 }
 void moveCursorRight() {
@@ -405,7 +405,7 @@ void moveCursorRight() {
   scrollWindow();
   redrawLCDLine();
   if (bluetoothEnabled && bleKeyboard.isConnected()) {
-      bleKeyboard.press(KEY_RIGHT_ARROW);
+      bleKeyboard.write(KEY_RIGHT_ARROW);
   }
 }
 
@@ -642,7 +642,8 @@ void setEndContraction(char* buffer, int& bufLen, byte* fullBufferBraille) {
 }
 
 void handleSpaceKeyDirect() {
-    char buf[512]; 
+    String oldStr = fullBuffer;
+    char buf[1024]; 
     int bufLen = fullBuffer.length();
     fullBuffer.toCharArray(buf, sizeof(buf));
 
@@ -660,21 +661,46 @@ void handleSpaceKeyDirect() {
 
     int newChars = fullBuffer.length() - oldLen;
 
-    if (bluetoothEnabled && bleKeyboard.isConnected() && newChars > 0) {
-        bleKeyboard.print(fullBuffer.substring(oldLen));
-    }
+    sendChangesToBLE(oldStr, fullBuffer);
 }
 
-void sendContractionToBLE(const String& contraction, int prevLength) {
+void sendChangesToBLE(const String& oldStr, const String& newStr) {
     if (!bluetoothEnabled || !bleKeyboard.isConnected()) return;
 
-    // delete the old characters from the host
-    for (int i = 0; i < prevLength; i++) {
-        bleKeyboard.write(KEY_BACKSPACE);
+    int a = 0;
+    while (a < oldStr.length() && a < newStr.length() && oldStr[a] == newStr[a]) {
+        a++;
     }
-    bleKeyboard.print(contraction);
-}
 
+    // If nothing changed, exit
+    if (a == oldStr.length() && a == newStr.length()) {
+        return;
+    }
+
+    int bOld = oldStr.length() - 1;
+    int bNew = newStr.length() - 1;
+
+    while (bOld >= a && bNew >= a && oldStr[bOld] == newStr[bNew]) {
+        bOld--;
+        bNew--;
+    }
+
+    // Compute how many characters were removed
+    int toDelete = (bOld >= a) ? (bOld - a + 1) : 0;
+
+    // replacement text
+    String replacement = (bNew >= a) ? newStr.substring(a, bNew + 1) : "";
+
+    // deletion ---
+    for (int i = 0; i < toDelete; i++) {
+        bleKeyboard.write(KEY_BACKSPACE);
+        delay(3);  // important for BLE HID stability
+    }
+
+    if (replacement.length() > 0) {
+        bleKeyboard.print(replacement);
+    }
+}
 
 void startUP() {
   lcd.clear();
@@ -750,6 +776,22 @@ void loadTone() {
   tone(buzzerPin, 2000, 80);
   delay(300);
 }
+void btTone() {
+  tone(buzzerPin, 2400, 60);
+  delay(200);
+  tone(buzzerPin, 2800, 60);
+  delay(200);
+  tone(buzzerPin, 3200, 80);
+  delay(300);
+}
+void btdTone() {
+  tone(buzzerPin, 3200, 60); 
+  delay(200);
+  tone(buzzerPin, 2800, 60);
+  delay(200);
+  tone(buzzerPin, 2400, 80);
+  delay(300);
+}
 void enterTone() {
   sound(1600); 
   delay(100);
@@ -799,6 +841,7 @@ void loop() {
               Serial.println("Host Connected!");
               lcd.setCursor(0,0);
               lcd.print("Host Connected! ");
+              btTone();
               delay(2000);
               scrollWindow();
               redrawLCDLine();
@@ -811,6 +854,7 @@ void loop() {
               Serial.println("Host Disconnected!");
               lcd.setCursor(0,0);
               lcd.print("Disconnected!    "); 
+              btdTone();
               delay(2000);
               scrollWindow();
               redrawLCDLine();
@@ -930,6 +974,7 @@ void handleKeyPress(char key) {
                 lcd.setCursor(0,0);
                 lcd.print("BT HID enabled!");
                 Serial.println("BT HID enabled!");
+                startupTone();
                 int barWidth = 16;
                 int speed = 15; // milliseconds per step
                 for (int i = 0; i <= barWidth; i++) {
@@ -945,24 +990,51 @@ void handleKeyPress(char key) {
 
                 unsigned long startTime = millis();
                 lcd.setCursor(0,0);
-                lcd.print("Waiting host... ");
+                lcd.print("Waiting for host");
 
                 while (!bleKeyboard.isConnected()) {
+                    unsigned long elapsed = (millis() - startTime) / 1000;
+
+                    // show seconds
                     lcd.setCursor(0,1);
-                    lcd.print((millis() - startTime)/1000); // seconds elapsed
-                    delay(50); // small delay to let BLE stack update
+                    lcd.print(elapsed);
+                    lcd.print(" sec ");
+
+                    // check for timeout (45 seconds)
+                    if (elapsed >= 45) {
+                        // Disable BT
+                        bleKeyboard.end();
+                        bluetoothEnabled = false;
+
+                        // Show timeout message
+                        lcd.setCursor(0,0);
+                        lcd.print("BT Timeout       ");
+                        lcd.setCursor(0,1);
+                        lcd.print("Turning off...   ");
+                        btdTone();
+                        delay(2000);
+                        bluetoothEnabled = false;
+                        btStop();
+
+
+                        scrollWindow();
+                        redrawLCDLine();
+                        updateLCDMode();
+                        return;
+                    }
+                    delay(50);
                 }
-                
                 scrollWindow();
                 redrawLCDLine();
                 updateLCDMode();
             } else {
-                bleKeyboard.end();
-                //btStop():
+                //bleKeyboard.end();
                 bluetoothEnabled = false;
+                btStop();
                 lcd.setCursor(0,0);
                 lcd.print("BT HID disabled!");
                 Serial.println("BT HID disabled!");
+                btdTone();
                 int barWidth = 16;
                 int speed = 15; // milliseconds per step
                 for (int i = 0; i <= barWidth; i++) {
