@@ -18,7 +18,7 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Sliding text
 - [x] Uncontracted braille
 - [x] Contracted braille (semi and full words)
-- [ ] Send data to device (via blueetooth)
+- [x] Send data to device (via blueetooth)
 - [x] Insert/delete function
 - [ ] Accent markers
 - [ ] Context based punctuation markers (semi working)
@@ -29,13 +29,13 @@ Braille to Text device for deciphering braille system to readable text format
 - [ ] Way to know the battery status and indicate it
 
 ## Todo: Prototype Hardware/Design
-- [x] Arduino Uno
+- [x] ESP32 (Formerly used: Arduino Uno)
 - [x] LCD I2C
 - [x] Keypad membrane
 - [x] Wire connectors
 - [x] Passive buzzer
 - [ ] Battery
-- [ ] Blueetooth module
+- [x] Blueetooth module
 - [ ] Casing
 - [ ] Prototype design
 - [ ] Type-C connector for charging

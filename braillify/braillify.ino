@@ -65,9 +65,9 @@ const unsigned long holdDelay = 800; // ms to wait before auto-repeat
 const unsigned long repeatRate = 150; // ms between repeats
 unsigned long nextRepeatTime = 0;
 
-//BleKeyboard bleKeyboard("Braillify", "Group ano", 100);
+BleKeyboard bleKeyboard("Braillify", "Group ano", 100);
 bool bluetoothEnabled = false;
-BleKeyboard bleKeyboard;
+bool wasConnected = false;
 
 enum Mode { AUTO, TEXT, NUMBER, SPECIAL };
 Mode currentMode = AUTO;
@@ -378,11 +378,17 @@ void backspaceAtCursor() {
   if (windowStart > 0 && cursorPos < windowStart) windowStart--;
   scrollWindow();
   redrawLCDLine();
+  if (bluetoothEnabled && bleKeyboard.isConnected()) {
+      bleKeyboard.write(KEY_BACKSPACE);
+  }
 }
 
 // insert space at cursor
 void insertSpaceAtCursor() {
   insertAtCursor(' ');
+  if (bluetoothEnabled && bleKeyboard.isConnected()) {
+      bleKeyboard.print(' ');
+  }
 }
 
 // move cursor left/right
@@ -390,11 +396,17 @@ void moveCursorLeft() {
   if (cursorPos > 0) cursorPos--;
   scrollWindow();
   redrawLCDLine();
+  if (bluetoothEnabled && bleKeyboard.isConnected()) {
+      bleKeyboard.press(KEY_LEFT_ARROW);
+  }
 }
 void moveCursorRight() {
   if (cursorPos < fullBuffer.length()) cursorPos++;
   scrollWindow();
   redrawLCDLine();
+  if (bluetoothEnabled && bleKeyboard.isConnected()) {
+      bleKeyboard.press(KEY_RIGHT_ARROW);
+  }
 }
 
 // Cycle modes (0 key)
@@ -634,16 +646,35 @@ void handleSpaceKeyDirect() {
     int bufLen = fullBuffer.length();
     fullBuffer.toCharArray(buf, sizeof(buf));
 
+    int oldLen = fullBuffer.length();
+
     setEndContraction(buf, bufLen, fullBufferBraille);
     setFrontContraction(buf, bufLen, contractionPrefix);
-    
+
     fullBuffer = String(buf);
 
     if (::hasContraction) {
       cursorPos = fullBuffer.length();
     }
     ::hasContraction = false;
+
+    int newChars = fullBuffer.length() - oldLen;
+
+    if (bluetoothEnabled && bleKeyboard.isConnected() && newChars > 0) {
+        bleKeyboard.print(fullBuffer.substring(oldLen));
+    }
 }
+
+void sendContractionToBLE(const String& contraction, int prevLength) {
+    if (!bluetoothEnabled || !bleKeyboard.isConnected()) return;
+
+    // delete the old characters from the host
+    for (int i = 0; i < prevLength; i++) {
+        bleKeyboard.write(KEY_BACKSPACE);
+    }
+    bleKeyboard.print(contraction);
+}
+
 
 void startUP() {
   lcd.clear();
@@ -685,7 +716,6 @@ void setup() {
   lcd.setCursor(getLcdCursor(), 1);
   lcd.cursor();
   lcd.blink();
-  bleKeyboard.begin();
 }
 
 void sound(int freq) {
@@ -761,6 +791,34 @@ char getHeldKey() {
 void loop() {
   char key = getHeldKey();  
   unsigned long now = millis();
+
+  if (bluetoothEnabled) {
+      if (bleKeyboard.isConnected()) {
+          if (!wasConnected) {
+              // Host just connected
+              Serial.println("Host Connected!");
+              lcd.setCursor(0,0);
+              lcd.print("Host Connected! ");
+              delay(2000);
+              scrollWindow();
+              redrawLCDLine();
+              updateLCDMode();
+          }
+          wasConnected = true;
+      } else {
+          if (wasConnected) {
+              // Host just disconnected
+              Serial.println("Host Disconnected!");
+              lcd.setCursor(0,0);
+              lcd.print("Disconnected!    "); 
+              delay(2000);
+              scrollWindow();
+              redrawLCDLine();
+              updateLCDMode();
+          }
+          wasConnected = false;
+      }
+  }
 
   if (key != NO_KEY) {
       if (key != lastKey) {
@@ -850,6 +908,9 @@ void handleKeyPress(char key) {
                 for (int i = 0; i < out.length(); ++i) {
                     insertAtCursor(out[i], brailleBits);
                 }
+                if (bluetoothEnabled && bleKeyboard.isConnected()) {
+                    bleKeyboard.print(out);
+                }
             }
             brailleBits = 0;
             break;
@@ -862,29 +923,66 @@ void handleKeyPress(char key) {
         case 'A': saveLineToEEPROM(); break;
         case 'B': loadLineFromEEPROM(); break;
 
-        if (key == '1' && lastKey != '1') {
+        case '1':
             if (!bluetoothEnabled) {
-                bleKeyboard.begin();  // enable BT
+                bleKeyboard.begin();
                 bluetoothEnabled = true;
+                lcd.setCursor(0,0);
+                lcd.print("BT HID enabled!");
                 Serial.println("BT HID enabled!");
+                int barWidth = 16;
+                int speed = 15; // milliseconds per step
+                for (int i = 0; i <= barWidth; i++) {
+                    lcd.setCursor(0, 1); // bottom row
+                    for (int j = 0; j < barWidth; j++) {
+                        if (j <= i) lcd.print("#");
+                        else lcd.print(" ");
+                    }
+                    delay(speed);
+                }
+                scrollWindow();
+                redrawLCDLine();
+
+                unsigned long startTime = millis();
+                lcd.setCursor(0,0);
+                lcd.print("Waiting host... ");
+
+                while (!bleKeyboard.isConnected()) {
+                    lcd.setCursor(0,1);
+                    lcd.print((millis() - startTime)/1000); // seconds elapsed
+                    delay(50); // small delay to let BLE stack update
+                }
+                
+                scrollWindow();
+                redrawLCDLine();
+                updateLCDMode();
             } else {
-                bleKeyboard.end();    // disable BT (if your library supports it)
+                bleKeyboard.end();
+                //btStop():
                 bluetoothEnabled = false;
+                lcd.setCursor(0,0);
+                lcd.print("BT HID disabled!");
                 Serial.println("BT HID disabled!");
+                int barWidth = 16;
+                int speed = 15; // milliseconds per step
+                for (int i = 0; i <= barWidth; i++) {
+                    lcd.setCursor(0, 1); // bottom row
+                    for (int j = 0; j < barWidth; j++) {
+                        if (j <= i) lcd.print("#");
+                        else lcd.print(" ");
+                    }
+                    delay(speed);
+                }
+                scrollWindow();
+                redrawLCDLine();
+                updateLCDMode();
+                delay(100);
+                BleKeyboard bleKeyboard("Braillify", "Maker", 100);
             }
-        }
-
-        lastKey = key;
-
-        // Other keypad handling
-        if (bluetoothEnabled) {
-            String brailleChar = brailleToChar(brailleBits);
-            bleKeyboard.print(brailleChar);
-            Serial.println(brailleChar);
-        }
+            break;
 
         default: break;
     }
-
+    
     lcd.setCursor(getLcdCursor(), 1);
 }
