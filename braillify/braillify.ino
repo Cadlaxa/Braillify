@@ -62,7 +62,7 @@ byte contractionPrefix = 0;
 char lastKey = NO_KEY;
 unsigned long keyPressTime = 0; // when key was first pressed
 const unsigned long holdDelay = 800; // ms to wait before auto-repeat
-const unsigned long repeatRate = 150; // ms between repeats
+const unsigned long repeatRate = 100; // ms between repeats
 unsigned long nextRepeatTime = 0;
 
 BleKeyboard bleKeyboard("Braillify", "Group ano", 100);
@@ -409,7 +409,7 @@ void moveCursorRight() {
   }
 }
 
-// Cycle modes (0 key)
+// Cycle modes (8 key)
 void cycleMode() {
   if (currentMode == AUTO) currentMode = TEXT;
   else if (currentMode == TEXT) currentMode = SPECIAL;
@@ -422,10 +422,16 @@ void cycleMode() {
 void updateLCDMode() {
   lcd.setCursor(0,0);
   switch(currentMode) {
-    case AUTO:    lcd.print("Mode: AUTO       "); break;
-    case TEXT:    lcd.print("Mode: Text       "); break;
-    case NUMBER:  lcd.print("Mode: Number     "); break;
-    case SPECIAL: lcd.print("Mode: Special    "); break;
+    case AUTO:    lcd.print("Mode: AUTO     "); break;
+    case TEXT:    lcd.print("Mode: Text     "); break;
+    case NUMBER:  lcd.print("Mode: Number   "); break;
+    case SPECIAL: lcd.print("Mode: Special  "); break;
+  }
+  lcd.setCursor(15, 0);
+  if (bluetoothEnabled) {
+    lcd.write(byte(0));
+  } else {
+    lcd.print(" ");
   }
 }
 
@@ -709,7 +715,7 @@ void startUP() {
   startupTone();
 
   int barWidth = 16;
-  int speed = 100; // milliseconds per step
+  int speed = 80; // milliseconds per step
   for (int i = 0; i <= barWidth; i++) {
       lcd.setCursor(0, 1); // bottom row
       for (int j = 0; j < barWidth; j++) {
