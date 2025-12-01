@@ -28,7 +28,7 @@ const unsigned long debounceMillis = 35;
 
 // EEPROM settings
 const int EEPROM_ADDR = 0;       // starting address
-const int MAX_CHARS = 128;       // we save a single 128-char line
+const int MAX_CHARS = 1024;
 int loadingProgress = 0;
 unsigned long lastUpdate = 0;
 
@@ -472,8 +472,11 @@ void loadLineFromEEPROM() {
     // Load saved string
     String loaded = "";
     for (int i = 0; i < MAX_CHARS; ++i) {
-        char c = (char)EEPROM.read(EEPROM_ADDR + i);
-        loaded += c;
+        char c = EEPROM.read(EEPROM_ADDR + i);
+        if (c == 0xFF || c == 0x00) continue;
+        if (c >= 32 && c <= 126) {
+            loaded += c;
+        }
     }
 
     while (loaded.endsWith(" ")) {
@@ -501,12 +504,12 @@ void loadLineFromEEPROM() {
     scrollWindow();
     redrawLCDLine();
     updateLCDMode();
+    insertAtCursor(' ');
 
     // Bluetooth send
     if (bluetoothEnabled && bleKeyboard.isConnected()) {
         bleKeyboard.write(KEY_END);
         bleKeyboard.print(loaded);
-        // fix: may trailling space na hindi ko alam san galing
     }
 }
 
@@ -666,7 +669,7 @@ void setEndContraction(char* buffer, int& bufLen, byte* fullBufferBraille) {
 
 void handleSpaceKeyDirect() {
     String oldStr = fullBuffer;
-    char buf[1024]; 
+    char buf[MAX_BUFFER]; 
     int bufLen = fullBuffer.length();
     fullBuffer.toCharArray(buf, sizeof(buf));
 
@@ -751,7 +754,8 @@ void startUP() {
 void setup() {
   Serial.begin(9600);
   while (!Serial);
-  pinMode(buzzerPin, OUTPUT);
+  ledcSetup(0, 2000, 8);
+  ledcAttachPin(buzzerPin, 0);
   Wire.begin();
   lcd.init();
   lcd.backlight();
