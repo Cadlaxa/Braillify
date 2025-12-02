@@ -64,6 +64,9 @@ unsigned long keyPressTime = 0; // when key was first pressed
 const unsigned long holdDelay = 800; // ms to wait before auto-repeat
 const unsigned long repeatRate = 120; // ms between repeats
 unsigned long nextRepeatTime = 0;
+bool hashPending = false;
+unsigned long hashPressTime = 0;
+const unsigned long hashDebounceTime = 250;
 
 BleKeyboard bleKeyboard("Braillify", "Group ano", 100);
 bool bluetoothEnabled = false;
@@ -428,10 +431,10 @@ void cycleMode() {
 void updateLCDMode() {
   lcd.setCursor(0,0);
   switch(currentMode) {
-    case AUTO:    lcd.print("Mode: AUTO     "); break;
-    case TEXT:    lcd.print("Mode: Text     "); break;
-    case NUMBER:  lcd.print("Mode: Number   "); break;
-    case SPECIAL: lcd.print("Mode: Special  "); break;
+    case AUTO:    lcd.print("Mode: AUTO     "); Serial.println("Mode: AUTO"); break;
+    case TEXT:    lcd.print("Mode: Text     "); Serial.println("Mode: Text"); break;
+    case NUMBER:  lcd.print("Mode: Number   "); Serial.println("Mode: Number"); break;
+    case SPECIAL: lcd.print("Mode: Special  "); Serial.println("Mode: Special"); break;
   }
   lcd.setCursor(15, 0);
   if (bluetoothEnabled) {
@@ -443,18 +446,22 @@ void updateLCDMode() {
 
 // ---------- EEPROM save/load ----------
 void saveLineToEEPROM() {
-  for (int i = 0; i < MAX_CHARS; ++i) {
-    char c = (i < fullBuffer.length()) ? fullBuffer[i] : ' ';
-    EEPROM.write(EEPROM_ADDR + i, (uint8_t)c);
+  int len = fullBuffer.length();
+  for (int i = 0; i < MAX_CHARS; i++) {
+    if (i < len)
+        EEPROM.write(EEPROM_ADDR + i, fullBuffer[i]);
+    else
+        EEPROM.write(EEPROM_ADDR + i, 0); // Null padding
   }
-  // write a marker byte after the data to indicate saved data exists (optional)
-  EEPROM.write(EEPROM_ADDR + MAX_CHARS, 0xA5);
+
+  EEPROM.write(EEPROM_ADDR + MAX_CHARS, len);
   EEPROM.commit();
   lcd.setCursor(0,0);
   lcd.print("Saved to MEMORY ");
+  Serial.println("Text saved to EEPROM");;
   saveTone();
   int barWidth = 16;
-  int speed = 20;
+  int speed = 10;
   for (int i = 0; i <= barWidth; i++) {
       lcd.setCursor(0, 0);
       for (int j = 0; j < barWidth; j++) {
@@ -469,28 +476,27 @@ void saveLineToEEPROM() {
 void loadLineFromEEPROM() {
     uint8_t marker = EEPROM.read(EEPROM_ADDR + MAX_CHARS);
 
-    // Load saved string
+    // Load saved string from EEPROM
     String loaded = "";
     for (int i = 0; i < MAX_CHARS; ++i) {
         char c = EEPROM.read(EEPROM_ADDR + i);
-        if (c == 0xFF || c == 0x00) continue;
+        if (c == 0xFF || c == 0x00) continue; 
         if (c >= 32 && c <= 126) {
             loaded += c;
         }
     }
 
-    while (loaded.endsWith(" ")) {
-        loaded.remove(loaded.length() - 1);
-    }
-
+    while (loaded.endsWith(" ")) loaded.remove(loaded.length() - 1);
     if (loaded.length() == 0) return;
-  
+
+    // Show loading message
     lcd.setCursor(0, 0);
-    lcd.print("Loaded from MEM  ");   
+    lcd.print("Loaded from MEM  ");
     loadTone();
     delay(200);
+
     int barWidth = 16;
-    int speed = 20;
+    int speed = 10;
     for (int i = 0; i <= barWidth; i++) {
         lcd.setCursor(0, 1);
         for (int j = 0; j < barWidth; j++) {
@@ -499,18 +505,29 @@ void loadLineFromEEPROM() {
         }
         delay(speed);
     }
-    fullBuffer += loaded;
-    cursorPos = fullBuffer.length();
+
+    // Insert loaded text at cursor
+    String oldBuffer = fullBuffer;
+    int startPos = cursorPos; 
+    for (int i = 0; i < loaded.length(); i++) {
+        insertAtCursor(loaded[i]); 
+    }
+    insertAtCursor(' '); 
     scrollWindow();
     redrawLCDLine();
     updateLCDMode();
-    insertAtCursor(' ');
 
-    // Bluetooth send
     if (bluetoothEnabled && bleKeyboard.isConnected()) {
         bleKeyboard.write(KEY_END);
-        bleKeyboard.print(loaded);
+        for (int i = 0; i < loaded.length(); i++) {
+          char c = loaded[i];
+          if (c >= 32 && c <= 126) {
+              bleKeyboard.write(c);
+              delay(35); // small delay to let BLE send
+          }
+      }
     }
+    Serial.print("Loaded text: "); Serial.println(loaded);
 }
 
 struct UEBContraction {
@@ -679,6 +696,7 @@ void handleSpaceKeyDirect() {
     setFrontContraction(buf, bufLen, contractionPrefix);
 
     fullBuffer = String(buf);
+    //Serial.print("ContractionBits: "); Serial.println(fullBuffer);
 
     if (::hasContraction) {
       cursorPos = fullBuffer.length();
@@ -891,6 +909,12 @@ void loop() {
       }
   }
 
+  if (hashPending && (millis() - hashPressTime >= hashDebounceTime)) {
+      hashPending = false;
+      handleHashSinglePress();
+      brailleBits = 0;
+  }
+
   if (key != NO_KEY) {
       if (key != lastKey) {
           lastKey = key;
@@ -899,28 +923,28 @@ void loop() {
           handleKeyPress(key);
             switch (key) {
               case '2':
-                sound(C);
-                break;
               case '5':
-                sound(D);
-                break;
               case '8':
-                sound(E);
-                break;
               case '3':
-                sound(F);
-                break;
               case '6':
-                sound(G);
-                break;
               case '9':
-                sound(A);
-                break;
+                  if (hashPending) {
+                      hashPending = false;
+                      brailleBits = 0;
+                  }
+                  if (key == '2') sound(C);
+                  else if (key == '5') sound(D);
+                  else if (key == '8') sound(E);
+                  else if (key == '3') sound(F);
+                  else if (key == '6') sound(G);
+                  else if (key == '9') sound(A);
+                  break;
             }
+
           if (key == '#') lastKey = NO_KEY; 
           if (key == '#') {
             enterTone();
-          } else if (key == '0' || key == '7' || key == 'C') {
+          } else if (key == '0' || key == '7' || key == 'C'| key == '1'| key == '4') {
             sound(1800);
           } else if (key == 'D') {
             sound(2100);
@@ -937,6 +961,35 @@ void loop() {
   } else {
       lastKey = NO_KEY; // key released
   }
+}
+
+void handleHashSinglePress() {
+    String out = brailleToChar(brailleBits);
+    Serial.print("BrailleBits: "); Serial.print(out); Serial.print(" ");
+    Serial.print(brailleBits, DEC); Serial.print(" "); Serial.println(brailleBits, BIN);
+
+    if (out != "") {
+        if (fullBuffer.length() + out.length() >= MAX_BUFFER) return;
+
+        if (fullBuffer.length() == 0 || fullBuffer.endsWith(" ")) {
+            contractionPrefix = brailleBits;
+        }
+
+        for (int i = 0; i < out.length(); ++i) {
+            insertAtCursor(out[i], brailleBits);
+        }
+
+        if (bluetoothEnabled && bleKeyboard.isConnected()) {
+            bleKeyboard.print(out);
+        }
+    }
+}
+
+void handleHashDoublePress() {
+    insertAtCursor(' ');
+    if (bluetoothEnabled && bleKeyboard.isConnected()) {
+        bleKeyboard.write(KEY_RETURN);
+    }
 }
 
 void handleKeyPress(char key) {
@@ -965,25 +1018,15 @@ void handleKeyPress(char key) {
             break;
 
         case '#': { // braille -> char
-            String out = brailleToChar(brailleBits);
-            Serial.print("BrailleBits: "); Serial.print(out); Serial.print(" "); Serial.print(brailleBits, DEC); Serial.print(" "); Serial.println(brailleBits, BIN);
-            if (out != "") {
-                if (fullBuffer.length() + out.length() >= MAX_BUFFER) {
-                    // Handle error or just ignore input
-                    brailleBits = 0;
-                    break;
-                }
-                if (fullBuffer.length() == 0 || fullBuffer.endsWith(" ")) {
-                    contractionPrefix = brailleBits;
-                }
-                for (int i = 0; i < out.length(); ++i) {
-                    insertAtCursor(out[i], brailleBits);
-                }
-                if (bluetoothEnabled && bleKeyboard.isConnected()) {
-                    bleKeyboard.print(out);
-                }
+            unsigned long now = millis();
+            if (hashPending && (now - hashPressTime < hashDebounceTime)) {
+                hashPending = false;  // cancel single
+                handleHashDoublePress();
+                brailleBits = 0;
+                break;
             }
-            brailleBits = 0;
+            hashPending = true;
+            hashPressTime = now;
             break;
         }
 
