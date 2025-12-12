@@ -5,6 +5,8 @@
 #include <cstring>
 #include <Wire.h>
 #include <BleKeyboard.h>
+#include <Preferences.h>
+Preferences prefs;
 
 // LCD setup (I2C)
 #define I2C_ADDR 0x27  
@@ -23,6 +25,18 @@ byte rowPins[ROWS] = {32, 33, 25, 26};
 byte colPins[COLS] = {27, 14, 12, 13};
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 const int buzzerPin = 15;
+const int vibroPin = 4;
+enum FeedbackMode {
+  SOUND_ONLY = 0,
+  VIBRATE_ONLY = 1
+};
+bool vibActive = false;
+unsigned long vibStart = 0;
+unsigned int vibDuration = 0;
+
+FeedbackMode feedbackMode = SOUND_ONLY;
+bool vibrationEnabled = true;
+bool lastButtonState = HIGH;
 unsigned long lastBeep = 0;
 const unsigned long debounceMillis = 35;
 
@@ -774,12 +788,20 @@ void setup() {
   while (!Serial);
   ledcSetup(0, 2000, 8);
   ledcAttachPin(buzzerPin, 0);
+
+  pinMode(vibroPin, OUTPUT);
+  digitalWrite(vibroPin, LOW);
   Wire.begin();
+
   lcd.init();
   lcd.backlight();
   lcd.clear();
+
   keypad.setHoldTime(holdDelay);
   EEPROM.begin(512);
+  prefs.begin("settings", false);
+  feedbackMode = (FeedbackMode)prefs.getUInt("fbmode", 0);
+  prefs.end();
 
   startUP();
 
@@ -789,64 +811,79 @@ void setup() {
   lcd.blink();
 }
 
-void sound(int freq) {
+void vibrate(int durationMs, int strength) {
+  digitalWrite(vibroPin, HIGH);
+  vibStart = millis();
+  vibDuration = durationMs;
+  vibActive = true;
+}
+
+void sound(int freq, int dur) {
   unsigned long now = millis();
   if (now - lastBeep >= debounceMillis) {
-    tone(buzzerPin, freq, 60);
+
+    if (feedbackMode != VIBRATE_ONLY) {
+      tone(buzzerPin, freq, dur);
+    }
+
+    if (feedbackMode != SOUND_ONLY) {
+      vibrate(200, 230);
+    }
+
     lastBeep = now;
   }
 }
 
 void startupTone() {
-  tone(buzzerPin, 1500, 120);
+  sound(1500, 120);
   delay(150);
-  tone(buzzerPin, 2000, 120);
+  sound(2000, 120);
   delay(150);
-  tone(buzzerPin, 2500, 160);
+  sound(2500, 160);
   delay(200);
 }
 void saveTone() {
-  tone(buzzerPin, 2000, 60);
+  sound(2000, 60);
   delay(200);
-  tone(buzzerPin, 2400, 60);
+  sound(2400, 60);
   delay(200);
-  tone(buzzerPin, 2800, 80);
+  sound(2800, 80);
   delay(300);
 }
 void loadTone() {
-  tone(buzzerPin, 2800, 60); 
+  sound(2800, 60); 
   delay(200);
-  tone(buzzerPin, 2400, 60);
+  sound(2400, 60);
   delay(200);
-  tone(buzzerPin, 2000, 80);
+  sound(2000, 80);
   delay(300);
 }
 void btTone() {
-  tone(buzzerPin, 2400, 60);
+  sound(2400, 60);
   delay(200);
-  tone(buzzerPin, 2800, 60);
+  sound(2800, 60);
   delay(200);
-  tone(buzzerPin, 3200, 80);
+  sound(3200, 80);
   delay(300);
 }
 void btdTone() {
-  tone(buzzerPin, 3200, 60); 
+  sound(3200, 60); 
   delay(200);
-  tone(buzzerPin, 2800, 60);
+  sound(2800, 60);
   delay(200);
-  tone(buzzerPin, 2400, 80);
+  sound(2400, 60);
   delay(300);
 }
 void enterTone() {
-  sound(1600); 
+  sound(1600, 60); 
   delay(100);
-  sound(1600);
+  sound(1600, 60);
   delay(100);
 }
 void modeTone() {
-  tone(buzzerPin, 2000, 120);
+  sound(2000, 120);
   delay(150);
-  tone(buzzerPin, 2500, 160);
+  sound(2500, 160);
   delay(300);
 }
 #define C 2093
@@ -879,6 +916,11 @@ void loop() {
   char key = getHeldKey();  
   unsigned long now = millis();
 
+  if (vibActive && millis() - vibStart >= vibDuration) {
+    digitalWrite(vibroPin, LOW);
+    vibActive = false;
+  }
+ 
   if (bluetoothEnabled) {
       if (bleKeyboard.isConnected()) {
           if (!wasConnected) {
@@ -932,22 +974,22 @@ void loop() {
                       hashPending = false;
                       brailleBits = 0;
                   }
-                  if (key == '2') sound(C);
-                  else if (key == '5') sound(D);
-                  else if (key == '8') sound(E);
-                  else if (key == '3') sound(F);
-                  else if (key == '6') sound(G);
-                  else if (key == '9') sound(A);
+                  if (key == '2') sound(C, 70);
+                  else if (key == '5') sound(D, 70);
+                  else if (key == '8') sound(E, 70);
+                  else if (key == '3') sound(F, 70);
+                  else if (key == '6') sound(G, 70);
+                  else if (key == '9') sound(A, 70);
                   break;
             }
 
           if (key == '#') lastKey = NO_KEY; 
           if (key == '#') {
             enterTone();
-          } else if (key == '0' || key == '7' || key == 'C'| key == '1'| key == '4') {
-            sound(1800);
+          } else if (key == '0' || key == '7' || key == 'C'|| key == '1'|| key == '4') {
+            sound(1800, 70);
           } else if (key == 'D') {
-            sound(2100);
+            sound(2100, 70);
           } else if (key == '*') {
             modeTone();
           }
@@ -992,6 +1034,21 @@ void handleHashDoublePress() {
     }
 }
 
+void showFeedbackMode() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+
+  if (feedbackMode == VIBRATE_ONLY) {
+    lcd.print("===   MUTE   ===");
+  } 
+  else if (feedbackMode == SOUND_ONLY) {
+    lcd.print("===  SOUND   ===");
+  }
+  delay(2000);
+  updateLCDMode();
+  redrawLCDLine();
+}
+
 void handleKeyPress(char key) {
     switch(key) {
         case '*': cycleMode(); break;
@@ -1003,6 +1060,22 @@ void handleKeyPress(char key) {
         case '3': brailleBits |= 8;   break;   // dot 4
         case '6': brailleBits |= 16;  break;   // dot 5
         case '9': brailleBits |= 32;  break;   // dot 6
+
+        case '4':
+          feedbackMode = (FeedbackMode)((feedbackMode + 1) % 2);
+
+          prefs.begin("settings", false);
+          prefs.putUInt("fbmode", feedbackMode);
+          prefs.end();
+
+          if (feedbackMode == VIBRATE_ONLY) {
+            vibrate(300, 200);
+          } 
+          else if (feedbackMode == SOUND_ONLY) {
+            modeTone();
+          }
+          showFeedbackMode();
+          break;
 
         case '0': // space
             handleSpaceKeyDirect();
