@@ -20,12 +20,13 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Contracted braille (semi and full words)
 - [x] Send data to device (via blueetooth)
 - [x] Insert/delete function
-- [ ] Accent markers
+- [x] Accent markers
 - [ ] Context based punctuation markers (semi working)
 - [x] 5th sequence and other contractions 
 - [x] Save string to memory
 - [x] Load string from memory
 - [x] Hold button to trigger hold
+- [x] Local hosted site
 - [ ] Way to know the battery status and indicate it
 
 ## Todo: Prototype Hardware/Design
@@ -36,8 +37,8 @@ Braille to Text device for deciphering braille system to readable text format
 - [x] Passive buzzer
 - [ ] Battery
 - [x] Blueetooth module
-- [ ] Casing
-- [ ] Prototype design
+- [x] Casing
+- [x] Prototype design
 - [ ] Type-C connector for charging
 - [ ] On/off button
 

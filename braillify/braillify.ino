@@ -1,16 +1,24 @@
 #include <Keypad.h>
 #include <LiquidCrystal_I2C.h>
 #include <EEPROM.h>
-//#include <Arduino.h>
 #include <cstring>
 #include <Wire.h>
 #include <BleKeyboard.h>
 #include <Preferences.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+
 Preferences prefs;
 
 // LCD setup (I2C)
 #define I2C_ADDR 0x27  
 LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
+
+// Web Server & Captive Portal DNS
+WebServer server(80);
+DNSServer dnsServer;
+const byte DNS_PORT = 53;
 
 // Keypad setup
 const byte ROWS = 4;
@@ -41,7 +49,7 @@ unsigned long lastBeep = 0;
 const unsigned long debounceMillis = 35;
 
 // EEPROM settings
-const int EEPROM_ADDR = 0;       // starting address
+const int EEPROM_ADDR = 0;
 const int MAX_CHARS = 1024;
 int loadingProgress = 0;
 unsigned long lastUpdate = 0;
@@ -49,8 +57,8 @@ unsigned long lastUpdate = 0;
 // Braille / editor state
 byte brailleBits = 0;
 int cursorPos = 0;
-String fullBuffer = "";      // full text buffer (can be longer than 16)
-int windowStart = 0;         // left-most index shown on LCD
+String fullBuffer = "";
+int windowStart = 0;
 bool hasContraction = false;
 bool nextCapital = false;
 bool capsLock = false;
@@ -70,13 +78,13 @@ bool textPressedOnce = false;
 int indicatorLength = 0;
 
 #define MAX_BUFFER 128
-byte fullBufferBraille[MAX_BUFFER];  // parallel array to store braille cells
+byte fullBufferBraille[MAX_BUFFER];
 byte contractionPrefix = 0;
 
 char lastKey = NO_KEY;
-unsigned long keyPressTime = 0; // when key was first pressed
-const unsigned long holdDelay = 800; // ms to wait before auto-repeat
-const unsigned long repeatRate = 120; // ms between repeats
+unsigned long keyPressTime = 0;
+const unsigned long holdDelay = 800;
+const unsigned long repeatRate = 120;
 unsigned long nextRepeatTime = 0;
 bool hashPending = false;
 unsigned long hashPressTime = 0;
@@ -88,6 +96,46 @@ bool wasConnected = false;
 
 enum Mode { AUTO, TEXT, NUMBER, SPECIAL };
 Mode currentMode = AUTO;
+
+// Note Frequencies
+#define C 2093
+#define D 2349
+#define E 2637
+#define F 2794
+#define G 3136
+#define A 3520
+
+// Forward declarations
+void handleKeyPress(char key);
+void handleHashSinglePress();
+void handleHashDoublePress();
+void showTempIndicator(char ch, int len);
+void clearTempIndicator();
+int getLcdCursor();
+void scrollWindow();
+void redrawLCDLine();
+void insertAtCursor(char c, byte brailleCell = 0);
+void backspaceAtCursor();
+void insertSpaceAtCursor();
+void moveCursorLeft();
+void moveCursorRight();
+void cycleMode();
+void updateLCDMode();
+void saveLineToEEPROM();
+void loadLineFromEEPROM();
+void handleSpaceKeyDirect();
+void sendChangesToBLE(const String& oldStr, const String& newStr);
+void sound(int freq, int dur);
+void vibrate(int durationMs, int strength);
+void startupTone();
+void saveTone();
+void loadTone();
+void btTone();
+void btdTone();
+void enterTone();
+void modeTone();
+void toggleBluetooth();
+byte charToBraille(char c);
 
 // ---------- Special & mapping functions ----------
 const char specialOutput[][8] = {
@@ -147,12 +195,38 @@ char brailleToNumber(byte b) {
   return '?';
 }
 
+// Reverse lookup: converts any ASCII character to its 6-dot Braille bitmask
+byte charToBraille(char c) {
+  if (c == ' ') return 0;
+  char lowerC = c;
+  if (lowerC >= 'A' && lowerC <= 'Z') lowerC += 32;
+
+  // Search single letters
+  for (int i = 0; i < 26; i++) {
+    if (brailleTextTable[i][0] == lowerC && brailleTextTable[i][1] == '\0') {
+      return brailleDotsTable[i];
+    }
+  }
+  // Search numbers
+  for (int i = 0; i < 10; i++) {
+    if (brailleNumChars[i] == c) {
+      return brailleNumDots[i];
+    }
+  }
+  // Search special symbols
+  for (int i = 0; i < 20; i++) {
+    if (strlen(specialOutput[i]) == 1 && specialOutput[i][0] == c) {
+      return specialDots[i];
+    }
+  }
+  return 0;
+}
+
 // ---------- Core convert (braille cell -> output string) ----------
 String brailleToChar(byte bits) {
   byte pattern = bits;
   String out = "";
 
-  // CAPITALIZATION DOT6
   if (pattern == 32) {
     if (dot6PressedOnce) {
       capsLock = true;
@@ -169,7 +243,6 @@ String brailleToChar(byte bits) {
   }
   if (pattern != 32) dot6PressedOnce = false;
 
-  // NUMBER TRIGGER (dot3+4+5+6) -> 0b111100
   if (pattern == 60) {
     if (numPressedOnce) {
       numberLock = true;
@@ -187,7 +260,6 @@ String brailleToChar(byte bits) {
   }
   if (pattern != 60) numPressedOnce = false;
 
-  // SPECIAL CHARACTER TRIGGER (dot4+5+6) -> 111000
   if (pattern == 56) {
     if (specialPressedOnce) {
       specialLock = true;
@@ -205,7 +277,6 @@ String brailleToChar(byte bits) {
   }
   if (pattern != 56) specialPressedOnce = false;
 
-  // TEXT TRIGGER (dot5+6) -> 110000
   if (pattern == 48) {
     if (textPressedOnce) {
       textLock = true;
@@ -241,31 +312,26 @@ String brailleToChar(byte bits) {
     clearTempIndicator();
   }
 
-  // AUTO detection
   if (currentMode == AUTO && pattern != 0) {
     if (brailleToText(pattern) != "~") currentMode = TEXT;
     else if (specialFromBraille(pattern) != "0") currentMode = SPECIAL;
     else if (brailleToNumber(pattern) != '?') currentMode = NUMBER;
   }
 
-  // Choose output based on mode
   if (currentMode == TEXT) {
       out = brailleToText(pattern);
       if (out == "~") {
           String s = specialFromBraille(pattern);
           if (s != "0") {
               out = String(s);
-              currentMode = SPECIAL;  // switch to special
           }
           else {
-              // Not special either → number mode
               char n = brailleToNumber(pattern);
               if (n != '?') {
                   out = String(n);
-                  currentMode = NUMBER;
               }
               else {
-                  out = "?"; // nothing matched at all
+                  out = "?";
               }
           }
       }
@@ -275,7 +341,6 @@ String brailleToChar(byte bits) {
           out = String(s);
       } else {
           out = brailleToText(pattern);
-          currentMode = TEXT;  // special failed → back to text
       }
   } else if (currentMode == NUMBER) {
       char n = brailleToNumber(pattern);
@@ -283,19 +348,12 @@ String brailleToChar(byte bits) {
           out = String(n);
       } 
       else {
-          // Fallback to special
           String s = specialFromBraille(pattern);
           if (s != "") out = String(s);
           else out = brailleToText(pattern);
-          // exit number mode after fallback
-          currentMode = TEXT;
-          numberLock = false;
-          nextNumber = false;
-          numPressedOnce = false;
       }
   }
 
-  // Apply capitalization
   if ((nextCapital || capsLock) && out.length() > 0) {
     out.toUpperCase();
     nextCapital = false;
@@ -306,7 +364,7 @@ String brailleToChar(byte bits) {
     capsLock = false;
     nextCapital = false;
     clearTempIndicator();
-    return "";   // termination sign
+    return "";
   }
 
   return out;
@@ -324,7 +382,6 @@ void showTempIndicator(char ch, int len) {
   lcd.setCursor(newCursor, 1);
 }
 
-// Clear the temporary indicator (erase spaces where indicator was)
 void clearTempIndicator() {
   if (indicatorLength <= 0) return;
   int lcdCur = getLcdCursor();
@@ -347,7 +404,6 @@ int getLcdCursor() {
 void scrollWindow() {
   if (cursorPos < windowStart) windowStart = cursorPos;
   if (cursorPos >= windowStart + 16) windowStart = cursorPos - 15;
-  // keep windowStart >= 0
   if (windowStart < 0) windowStart = 0;
 }
 
@@ -367,30 +423,30 @@ void redrawLCDLine() {
   lcd.setCursor(lcdCursor, 1);
 }
 
-// insert a char at cursorPos
-void insertAtCursor(char c, byte brailleCell = 0) {
+void insertAtCursor(char c, byte brailleCell) {
     if (fullBuffer.length() >= MAX_BUFFER) return;
-
-    // Insert char into string
     fullBuffer = fullBuffer.substring(0, cursorPos) + c + fullBuffer.substring(cursorPos);
-
-    // Shift braille tracking array safely
     for (int i = fullBuffer.length() - 1; i > cursorPos; i--) {
         fullBufferBraille[i] = fullBufferBraille[i - 1];
     }
+    
+    // Auto-fallback if brailleCell bitmask wasn't provided
+    if (brailleCell == 0 && c != ' ') {
+      brailleCell = charToBraille(c);
+    }
 
     fullBufferBraille[cursorPos] = brailleCell;
-
     cursorPos++;
-
     scrollWindow();
     redrawLCDLine();
 }
 
-// backspace (remove char before cursorPos)
 void backspaceAtCursor() {
   if (cursorPos == 0) return;
   fullBuffer = fullBuffer.substring(0, cursorPos - 1) + fullBuffer.substring(cursorPos);
+  for (int i = cursorPos - 1; i < fullBuffer.length(); i++) {
+    fullBufferBraille[i] = fullBufferBraille[i + 1];
+  }
   cursorPos--;
   if (windowStart > 0 && cursorPos < windowStart) windowStart--;
   scrollWindow();
@@ -400,21 +456,18 @@ void backspaceAtCursor() {
   }
 }
 
-// insert space at cursor
 void insertSpaceAtCursor() {
-  insertAtCursor(' ');
+  insertAtCursor(' ', 0);
   if (bluetoothEnabled && bleKeyboard.isConnected()) {
       bleKeyboard.print(' ');
   }
 }
 
-// move cursor left/right
 void moveCursorLeft() {
   if (cursorPos > 0) {
       cursorPos--;
       scrollWindow();
       redrawLCDLine();
-
       if (bluetoothEnabled && bleKeyboard.isConnected()) {
           bleKeyboard.write(KEY_LEFT_ARROW);
       }
@@ -425,30 +478,28 @@ void moveCursorRight() {
       cursorPos++;
       scrollWindow();
       redrawLCDLine();
-
       if (bluetoothEnabled && bleKeyboard.isConnected()) {
           bleKeyboard.write(KEY_RIGHT_ARROW);
       }
   }
 }
 
-// Cycle modes (8 key)
 void cycleMode() {
   if (currentMode == AUTO) currentMode = TEXT;
   else if (currentMode == TEXT) currentMode = SPECIAL;
   else if (currentMode == SPECIAL) currentMode = NUMBER;
+  else if (currentMode == NUMBER) currentMode = AUTO;
   else currentMode = AUTO;
   updateLCDMode();
 }
 
-// update top-line mode display
 void updateLCDMode() {
   lcd.setCursor(0,0);
   switch(currentMode) {
-    case AUTO:    lcd.print("Mode: AUTO     "); Serial.println("Mode: AUTO"); break;
-    case TEXT:    lcd.print("Mode: Text     "); Serial.println("Mode: Text"); break;
-    case NUMBER:  lcd.print("Mode: Number   "); Serial.println("Mode: Number"); break;
-    case SPECIAL: lcd.print("Mode: Special  "); Serial.println("Mode: Special"); break;
+    case AUTO:    lcd.print("Mode: AUTO     "); break;
+    case TEXT:    lcd.print("Mode: Text     "); break;
+    case NUMBER:  lcd.print("Mode: Number   "); break;
+    case SPECIAL: lcd.print("Mode: Special  "); break;
   }
   lcd.setCursor(15, 0);
   if (bluetoothEnabled) {
@@ -458,21 +509,18 @@ void updateLCDMode() {
   }
 }
 
-// ---------- EEPROM save/load ----------
 void saveLineToEEPROM() {
   int len = fullBuffer.length();
   for (int i = 0; i < MAX_CHARS; i++) {
     if (i < len)
         EEPROM.write(EEPROM_ADDR + i, fullBuffer[i]);
     else
-        EEPROM.write(EEPROM_ADDR + i, 0); // Null padding
+        EEPROM.write(EEPROM_ADDR + i, 0);
   }
-
   EEPROM.write(EEPROM_ADDR + MAX_CHARS, len);
   EEPROM.commit();
   lcd.setCursor(0,0);
   lcd.print("Saved to MEMORY ");
-  Serial.println("Text saved to EEPROM");;
   saveTone();
   int barWidth = 16;
   int speed = 10;
@@ -489,8 +537,6 @@ void saveLineToEEPROM() {
 
 void loadLineFromEEPROM() {
     uint8_t marker = EEPROM.read(EEPROM_ADDR + MAX_CHARS);
-
-    // Load saved string from EEPROM
     String loaded = "";
     for (int i = 0; i < MAX_CHARS; ++i) {
         char c = EEPROM.read(EEPROM_ADDR + i);
@@ -503,7 +549,6 @@ void loadLineFromEEPROM() {
     while (loaded.endsWith(" ")) loaded.remove(loaded.length() - 1);
     if (loaded.length() == 0) return;
 
-    // Show loading message
     lcd.setCursor(0, 0);
     lcd.print("Loaded from MEM  ");
     loadTone();
@@ -520,13 +565,11 @@ void loadLineFromEEPROM() {
         delay(speed);
     }
 
-    // Insert loaded text at cursor
-    String oldBuffer = fullBuffer;
-    int startPos = cursorPos; 
+    // Insert loaded text with Braille dot bitmask mapping
     for (int i = 0; i < loaded.length(); i++) {
-        insertAtCursor(loaded[i]); 
+        insertAtCursor(loaded[i], charToBraille(loaded[i])); 
     }
-    insertAtCursor(' '); 
+    insertSpaceAtCursor(); 
     scrollWindow();
     redrawLCDLine();
     updateLCDMode();
@@ -537,11 +580,10 @@ void loadLineFromEEPROM() {
           char c = loaded[i];
           if (c >= 32 && c <= 126) {
               bleKeyboard.write(c);
-              delay(35); // small delay to let BLE send
+              delay(35);
           }
       }
     }
-    Serial.print("Loaded text: "); Serial.println(loaded);
 }
 
 struct UEBContraction {
@@ -640,7 +682,6 @@ void applyCaseStyle(const char* original, char* output) {
 void applyContraction(char* buffer, int& bufLen, byte* brailleArr = nullptr, byte prefixPassed = 0, bool front = true) {
     int bestLen = 0, bestIndex = -1;
     char letters[8];
-
     byte lastBraille = brailleArr ? getLastNonCapitalBrailleCell(brailleArr, bufLen) : 0;
 
     for (int i = 0; i < contractionCount; i++) {
@@ -710,14 +751,10 @@ void handleSpaceKeyDirect() {
     setFrontContraction(buf, bufLen, contractionPrefix);
 
     fullBuffer = String(buf);
-    //Serial.print("ContractionBits: "); Serial.println(fullBuffer);
-
     if (::hasContraction) {
       cursorPos = fullBuffer.length();
     }
     ::hasContraction = false;
-
-    int newChars = fullBuffer.length() - oldLen;
 
     sendChangesToBLE(oldStr, fullBuffer);
 }
@@ -730,10 +767,7 @@ void sendChangesToBLE(const String& oldStr, const String& newStr) {
         a++;
     }
 
-    // If nothing changed, exit
-    if (a == oldStr.length() && a == newStr.length()) {
-        return;
-    }
+    if (a == oldStr.length() && a == newStr.length()) return;
 
     int bOld = oldStr.length() - 1;
     int bNew = newStr.length() - 1;
@@ -743,16 +777,12 @@ void sendChangesToBLE(const String& oldStr, const String& newStr) {
         bNew--;
     }
 
-    // Compute how many characters were removed
     int toDelete = (bOld >= a) ? (bOld - a + 1) : 0;
-
-    // replacement text
     String replacement = (bNew >= a) ? newStr.substring(a, bNew + 1) : "";
 
-    // deletion ---
     for (int i = 0; i < toDelete; i++) {
         bleKeyboard.write(KEY_BACKSPACE);
-        delay(3);  // important for BLE HID stability
+        delay(3);
     }
 
     if (replacement.length() > 0) {
@@ -767,9 +797,9 @@ void startUP() {
   startupTone();
 
   int barWidth = 16;
-  int speed = 80; // milliseconds per step
+  int speed = 80;
   for (int i = 0; i <= barWidth; i++) {
-      lcd.setCursor(0, 1); // bottom row
+      lcd.setCursor(0, 1);
       for (int j = 0; j < barWidth; j++) {
           if (j <= i) lcd.print("#");
           else lcd.print(" ");
@@ -782,10 +812,474 @@ void startUP() {
   redrawLCDLine();
 }
 
-// ---------- ESP32 setup/loop ----------
+// -------------------------------------------------------------
+// LIGHT THEME HTML UI WITH STACKED CHARACTER & AUTO BROWSER LAUNCH
+// -------------------------------------------------------------
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>BRAILLIFY WEB CONTROLLER</title>
+<style>
+:root {
+  --bg: #f0f4f8;
+  --panel: #ffffff;
+  --text: #111827;
+  --border: #111827;
+  --orange: #ff9800;
+  --orange-dark: #e65100;
+  --blue-light: #e3f2fd;
+  --blue: #0288d1;
+  --green: #4caf50;
+  --lcd-bg: #e8f5e9;
+  --lcd-text: #1b4332;
+}
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif}
+body{background:var(--bg);color:var(--text);display:flex;justify-content:center;align-items:center;min-height:100vh;padding:15px}
+.container{width:100%;max-width:480px;background:var(--panel);border:3px solid var(--border);box-shadow:6px 6px 0px var(--border);border-radius:12px;padding:20px}
+.header{text-align:center;border-bottom:2px dashed var(--border);padding-bottom:12px;margin-bottom:16px}
+.header h1{font-size:1.6rem;letter-spacing:2px;color:var(--text);font-weight:900;font-family:'Courier New',monospace}
+.header .sub{font-size:.75rem;color:var(--orange-dark);font-weight:bold;margin-top:2px}
+
+/* Full Text Buffer Section with Stacked Braille Subscript */
+.full-text-section{margin-bottom:16px}
+.section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.section-title{font-size:.8rem;color:var(--orange-dark);font-weight:bold;text-transform:uppercase}
+.action-btn-group{display:flex;gap:6px}
+.action-btn{background:#fff3e0;border:2px solid var(--border);color:var(--orange-dark);font-size:0.75rem;font-weight:bold;padding:4px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;box-shadow:1px 2px 0px var(--border);transition:all .05s}
+.action-btn:active{transform:translate(1px,1px);box-shadow:0px 0px 0px var(--border)}
+.action-btn svg{width:14px;height:14px;fill:currentColor}
+
+/* Scrollable Container for Stacked Pairs */
+.full-text-box{background:#ffffff;border:2px solid var(--border);border-radius:8px;padding:10px;min-height:64px;max-height:120px;overflow-y:auto;overflow-x:hidden;box-shadow:inset 0 0 4px rgba(0,0,0,0.06);display:flex;flex-wrap:wrap;align-content:flex-start;gap:2px}
+.char-pair{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;padding:2px 4px;border-radius:4px;user-select:none;min-width:18px;transition:background 0.1s}
+.char-pair:hover{background:var(--blue-light)}
+.char-pair.cursor-here{background:var(--orange);color:#ffffff;font-weight:bold;animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.4}}
+
+.char-pair .top-char{font-size:1.1rem;font-weight:900;font-family:'Courier New',monospace;line-height:1}
+.char-pair .sub-braille{font-size:0.85rem;line-height:1;margin-top:2px;opacity:0.85;font-family:sans-serif}
+
+/* LCD Display Box */
+.lcd-frame{background:var(--lcd-bg);border:3px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px;box-shadow:inset 0 0 5px rgba(0,0,0,0.08)}
+.lcd-line{font-size:1.2rem;color:var(--lcd-text);letter-spacing:2px;white-space:pre;font-weight:bold;font-family:'Courier New',monospace;min-height:1.4em}
+
+/* Visual Cell & Transformed Text Banner */
+.status-card{display:flex;align-items:center;justify-content:space-between;background:var(--blue-light);border:2px solid var(--border);padding:14px;border-radius:8px;margin-bottom:16px}
+.cell-preview-box{display:flex;align-items:center;gap:16px}
+.braille-pattern-cell{display:grid;grid-template-columns:repeat(2,16px);grid-gap:8px;background:#ffffff;border:2px solid var(--border);padding:8px;border-radius:6px}
+.v-dot{width:16px;height:16px;border-radius:50%;background:#d0d7de;border:1.5px solid var(--border);transition:all .15s}
+.v-dot.active{background:var(--green);box-shadow:0 0 6px rgba(76,175,80,0.6)}
+
+.char-output-box{display:flex;flex-direction:column;align-items:flex-start}
+.char-label{font-size:0.7rem;font-weight:bold;color:var(--text);text-transform:uppercase;letter-spacing:1px}
+.char-val{font-size:1.8rem;font-weight:900;color:var(--orange-dark);font-family:'Courier New',monospace}
+
+.bit-badge{display:flex;flex-direction:column;align-items:flex-end;font-size:0.75rem;font-weight:bold;font-family:'Courier New',monospace}
+.bit-badge span{color:var(--blue)}
+
+/* Keypad Grid with SVG Icons */
+.keypad-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.key-btn{background:#ffffff;border:2px solid var(--border);color:var(--text);height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;box-shadow:2px 3px 0px var(--border);transition:all .05s;user-select:none;-webkit-touch-callout:none}
+.key-btn:active{transform:translate(2px,2px);box-shadow:0px 0px 0px var(--border);background:var(--blue-light)}
+.key-btn.cmd{background:#fff3e0;border-color:var(--border);color:var(--orange-dark)}
+.key-btn.cmd:active{background:var(--orange);color:#ffffff}
+.key-btn svg{width:22px;height:22px;fill:currentColor}
+.key-label{font-size:0.65rem;font-weight:800;margin-top:2px;font-family:'Courier New',monospace}
+.dot-key-num{font-size:1.1rem;font-weight:900;font-family:'Courier New',monospace}
+.dot-key-sub{font-size:0.6rem;color:#57606a;font-weight:700}
+.footer{text-align:center;font-size:.7rem;font-weight:bold;color:#57606a;margin-top:14px;border-top:2px solid var(--border);padding-top:8px}
+</style></head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>BRAILLIFY</h1>
+    <div class="sub">TACTILE HARDWARE TRANSLATOR</div>
+  </div>
+
+  <!-- Full Text Buffer Section with Subscript Braille & Buttons -->
+  <div class="full-text-section">
+    <div class="section-header">
+      <div class="section-title">> Transformed Full Text</div>
+      <div class="action-btn-group">
+        <button class="action-btn" id="tts-btn" onclick="speakFullText()" title="Read Text Aloud">
+          <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+          <span id="tts-btn-text">Speak</span>
+        </button>
+        <button class="action-btn" id="copy-btn" onclick="copyFullText()" title="Copy to Clipboard">
+          <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+          <span id="copy-btn-text">Copy Text</span>
+        </button>
+      </div>
+    </div>
+    <div class="full-text-box" id="full-text-box"></div>
+  </div>
+
+  <!-- Physical 16x2 LCD Mirror -->
+  <div class="lcd-frame">
+    <div class="lcd-line" id="lcd-line0">Mode: AUTO     </div>
+    <div class="lcd-line" id="lcd-line1">_               </div>
+  </div>
+
+  <!-- Visual Cell & Transformed Text -->
+  <div class="status-card">
+    <div class="cell-preview-box">
+      <div class="braille-pattern-cell">
+        <div class="v-dot" id="vdot1"></div>
+        <div class="v-dot" id="vdot4"></div>
+        <div class="v-dot" id="vdot2"></div>
+        <div class="v-dot" id="vdot5"></div>
+        <div class="v-dot" id="vdot3"></div>
+        <div class="v-dot" id="vdot6"></div>
+      </div>
+      <div class="char-output-box">
+        <div class="char-label">Cell Preview</div>
+        <div class="char-val" id="char-preview">~</div>
+      </div>
+    </div>
+    <div class="bit-badge">
+      <div>BITS: <span id="bit-val">0b000000</span></div>
+      <div>DEC: <span id="dec-val">0</span></div>
+    </div>
+  </div>
+
+  <!-- Icon-Based Remote Keypad -->
+  <div class="keypad-grid">
+    <!-- Row 1 -->
+    <button class="key-btn cmd" data-key="1" title="Bluetooth">
+      <svg viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 12.34L13 20.05v-3.76l1.88 1.88z"/></svg>
+      <span class="key-label">BT</span>
+    </button>
+    <button class="key-btn" data-key="2">
+      <span class="dot-key-num">2</span>
+      <span class="dot-key-sub">• Dot 1</span>
+    </button>
+    <button class="key-btn" data-key="3">
+      <span class="dot-key-num">3</span>
+      <span class="dot-key-sub">• Dot 4</span>
+    </button>
+    <button class="key-btn cmd" data-key="A" title="Save Memory">
+      <svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+      <span class="key-label">SAVE</span>
+    </button>
+
+    <!-- Row 2 -->
+    <button class="key-btn cmd" data-key="4" title="Mute Toggle">
+      <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+      <span class="key-label">MUTE</span>
+    </button>
+    <button class="key-btn" data-key="5">
+      <span class="dot-key-num">5</span>
+      <span class="dot-key-sub">• Dot 2</span>
+    </button>
+    <button class="key-btn" data-key="6">
+      <span class="dot-key-num">6</span>
+      <span class="dot-key-sub">• Dot 5</span>
+    </button>
+    <button class="key-btn cmd" data-key="B" title="Load Memory">
+      <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+      <span class="key-label">LOAD</span>
+    </button>
+
+    <!-- Row 3 -->
+    <button class="key-btn cmd" data-key="7" title="Cursor Left">
+      <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+      <span class="key-label">LEFT</span>
+    </button>
+    <button class="key-btn" data-key="8">
+      <span class="dot-key-num">8</span>
+      <span class="dot-key-sub">• Dot 3</span>
+    </button>
+    <button class="key-btn" data-key="9">
+      <span class="dot-key-num">9</span>
+      <span class="dot-key-sub">• Dot 6</span>
+    </button>
+    <button class="key-btn cmd" data-key="C" title="Cursor Right">
+      <svg viewBox="0 0 24 24"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
+      <span class="key-label">RIGHT</span>
+    </button>
+
+    <!-- Row 4 -->
+    <button class="key-btn cmd" data-key="*" title="Cycle Mode">
+      <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+      <span class="key-label">MODE</span>
+    </button>
+    <button class="key-btn" data-key="0" title="Space">
+      <svg viewBox="0 0 24 24"><path d="M18 9v4H6V9H4v6h16V9h-2z"/></svg>
+      <span class="key-label">SPACE</span>
+    </button>
+    <button class="key-btn cmd" data-key="#" title="Enter / Confirm Cell">
+      <svg viewBox="0 0 24 24"><path d="M19 7v4H5.83l3.58-3.59L8 6l-6 6 6 6 1.41-1.41L5.83 13H21V7h-2z"/></svg>
+      <span class="key-label">ENTER</span>
+    </button>
+    <button class="key-btn cmd" data-key="D" title="Backspace / Delete">
+      <svg viewBox="0 0 24 24"><path d="M22 3H7c-.69 0-1.23.35-1.59.88L0 12l5.41 8.11c.36.53.9.89 1.59.89h15c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H7.07L2.4 12l4.66-7H22v14zm-11.59-2L14 13.41 17.59 17 19 15.59 15.41 12 19 8.41 17.59 7 14 10.59 10.41 7 9 8.41 12.59 12 9 15.59z"/></svg>
+      <span class="key-label">DEL</span>
+    </button>
+  </div>
+
+  <div class="footer">ESP32 BRAILLIFY // AP: Braillify // 192.168.4.1</div>
+</div>
+
+<script>
+let currentBits=0;
+let currentFullText="";
+let currentCursorPos=0;
+let holdTimer=null;
+let repeatInterval=null;
+
+function updateDotsUI(){
+  const dots=[1,2,4,8,16,32];
+  const btnMap=[1,2,3,4,5,6];
+  dots.forEach((bit,idx)=>{
+    let dotNum=btnMap[idx];
+    let el=document.getElementById('vdot'+dotNum);
+    if(el){
+      (bit & currentBits)?el.classList.add('active'):el.classList.remove('active');
+    }
+  });
+  document.getElementById('bit-val').innerText='0b'+currentBits.toString(2).padStart(6,'0');
+  document.getElementById('dec-val').innerText=currentBits;
+}
+
+function renderFullText(text, pos, brailleArr){
+  currentFullText = text;
+  currentCursorPos = pos;
+  const container = document.getElementById('full-text-box');
+  container.innerHTML = '';
+
+  const len = text.length;
+  for(let i = 0; i <= len; i++){
+    const pairDiv = document.createElement('div');
+    pairDiv.className = 'char-pair';
+    if(i === pos){
+      pairDiv.classList.add('cursor-here');
+    }
+
+    const topChar = document.createElement('div');
+    topChar.className = 'top-char';
+    
+    const subBraille = document.createElement('div');
+    subBraille.className = 'sub-braille';
+
+    if(i < len){
+      let ch = text[i];
+      topChar.innerText = (ch === ' ') ? '\u00A0' : ch;
+      
+      let bits = (brailleArr && brailleArr[i] !== undefined) ? brailleArr[i] : 0;
+      subBraille.innerText = bits > 0 ? String.fromCharCode(0x2800 + bits) : '\u2800';
+    } else {
+      topChar.innerText = '\u00A0';
+      subBraille.innerText = '\u2800';
+    }
+
+    pairDiv.appendChild(topChar);
+    pairDiv.appendChild(subBraille);
+
+    pairDiv.onclick = () => setCursorPos(i);
+    container.appendChild(pairDiv);
+  }
+}
+
+function setCursorPos(idx){
+  fetch('/api/setcursor?pos=' + idx)
+    .then(r => r.json())
+    .then(d => updateState(d));
+}
+
+function sendKey(k){
+  fetch('/api/key?k=' + encodeURIComponent(k))
+    .then(r => r.json())
+    .then(d => updateState(d));
+}
+
+function startKeyHold(k){
+  sendKey(k);
+  if(['0','D','7','C'].includes(k)){
+    holdTimer = setTimeout(() => {
+      repeatInterval = setInterval(() => sendKey(k), 120);
+    }, 600);
+  }
+}
+
+function stopKeyHold(){
+  if(holdTimer){ clearTimeout(holdTimer); holdTimer = null; }
+  if(repeatInterval){ clearInterval(repeatInterval); repeatInterval = null; }
+}
+
+document.querySelectorAll('.key-btn').forEach(btn => {
+  const k = btn.getAttribute('data-key');
+  if(!k) return;
+
+  btn.addEventListener('mousedown', (e) => { e.preventDefault(); startKeyHold(k); });
+  btn.addEventListener('mouseup', stopKeyHold);
+  btn.addEventListener('mouseleave', stopKeyHold);
+
+  btn.addEventListener('touchstart', (e) => { e.preventDefault(); startKeyHold(k); });
+  btn.addEventListener('touchend', stopKeyHold);
+  btn.addEventListener('touchcancel', stopKeyHold);
+});
+
+function openInExternalBrowser(){
+  const url = 'http://192.168.4.1';
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  
+  if (isAndroid) {
+    // Android Intent forces opening Chrome / default standalone browser out of the captive popup
+    window.location.href = 'intent://192.168.4.1#Intent;scheme=http;action=android.intent.action.VIEW;end;';
+  } else {
+    // iOS / standard webview fallback
+    window.open(url, '_system') || (window.location.href = url);
+  }
+}
+
+function speakFullText(){
+  if(!currentFullText || currentFullText.trim() === '') return;
+  if('speechSynthesis' in window){
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(currentFullText);
+    utterance.rate = 0.95;
+    
+    const btnLabel = document.getElementById('tts-btn-text');
+    btnLabel.innerText = 'Speaking...';
+    utterance.onend = () => { btnLabel.innerText = 'Speak'; };
+    utterance.onerror = () => { btnLabel.innerText = 'Speak'; };
+    
+    window.speechSynthesis.speak(utterance);
+  } else {
+    // Direct trigger to launch default browser when Web Speech API is blocked/unsupported
+    openInExternalBrowser();
+  }
+}
+
+function copyFullText(){
+  const text = currentFullText;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(() => flashCopyStatus());
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    flashCopyStatus();
+  }
+}
+
+function flashCopyStatus(){
+  const label = document.getElementById('copy-btn-text');
+  label.innerText = 'Copied!';
+  setTimeout(() => label.innerText = 'Copy Text', 1500);
+}
+
+function updateState(d){
+  currentBits = d.bits;
+  updateDotsUI();
+  document.getElementById('lcd-line0').innerText = d.lcd0;
+  document.getElementById('lcd-line1').innerText = d.lcd1;
+  document.getElementById('char-preview').innerText = d.preview || '~';
+  renderFullText(d.fullText || "", d.cursor || 0, d.brailleArray || []);
+}
+
+function pollState(){
+  fetch('/api/state')
+    .then(r => r.json())
+    .then(d => updateState(d))
+    .catch(e => 0);
+}
+
+setInterval(pollState, 400);
+pollState();
+</script></body></html>
+)rawliteral";
+
+// ---------- Web Server Endpoints ----------
+void handleRoot() {
+  server.send(200, "text/html", index_html);
+}
+
+void getSystemStateJson(String &jsonOut) {
+  String line0 = "";
+  switch(currentMode) {
+    case AUTO:    line0 = "Mode: AUTO     "; break;
+    case TEXT:    line0 = "Mode: Text     "; break;
+    case NUMBER:  line0 = "Mode: Number   "; break;
+    case SPECIAL: line0 = "Mode: Special  "; break;
+  }
+  if (bluetoothEnabled) line0.setCharAt(15, '*');
+
+  String line1 = "";
+  if (fullBuffer.length() <= windowStart) {
+    line1 = "";
+  } else {
+    int end = windowStart + 16;
+    if (end > fullBuffer.length()) end = fullBuffer.length();
+    line1 = fullBuffer.substring(windowStart, end);
+  }
+  while (line1.length() < 16) line1 += " ";
+
+  String preview = brailleToChar(brailleBits);
+  if (preview == "") preview = " ";
+
+  String safeFullText = fullBuffer;
+  safeFullText.replace("\\", "\\\\");
+  safeFullText.replace("\"", "\\\"");
+
+  // Build JSON Array for parallel braille pattern bitmasks with automatic fallback
+  String jsonBrailleArray = "[";
+  for(int i = 0; i < fullBuffer.length(); i++) {
+    byte b = fullBufferBraille[i];
+    if (b == 0 && fullBuffer[i] != ' ') {
+      b = charToBraille(fullBuffer[i]);
+    }
+    jsonBrailleArray += String(b);
+    if(i < fullBuffer.length() - 1) jsonBrailleArray += ",";
+  }
+  jsonBrailleArray += "]";
+
+  jsonOut = "{";
+  jsonOut += "\"bits\":" + String(brailleBits) + ",";
+  jsonOut += "\"mode\":" + String((int)currentMode) + ",";
+  jsonOut += "\"cursor\":" + String(cursorPos) + ",";
+  jsonOut += "\"preview\":\"" + preview + "\",";
+  jsonOut += "\"lcd0\":\"" + line0 + "\",";
+  jsonOut += "\"lcd1\":\"" + line1 + "\",";
+  jsonOut += "\"fullText\":\"" + safeFullText + "\",";
+  jsonOut += "\"brailleArray\":" + jsonBrailleArray;
+  jsonOut += "}";
+}
+
+void handleApiState() {
+  String json;
+  getSystemStateJson(json);
+  server.send(200, "application/json", json);
+}
+
+void handleApiKey() {
+  if (server.hasArg("k")) {
+    String kArg = server.arg("k");
+    if (kArg.length() > 0) {
+      char key = kArg.charAt(0);
+      handleKeyPress(key);
+    }
+  }
+  handleApiState();
+}
+
+void handleApiSetCursor() {
+  if (server.hasArg("pos")) {
+    int newPos = server.arg("pos").toInt();
+    if (newPos >= 0 && newPos <= fullBuffer.length()) {
+      cursorPos = newPos;
+      scrollWindow();
+      redrawLCDLine();
+      sound(1800, 40);
+    }
+  }
+  handleApiState();
+}
+
+// ---------- ESP32 Setup & Loop ----------
 void setup() {
   Serial.begin(9600);
-  while (!Serial);
   ledcSetup(0, 2000, 8);
   ledcAttachPin(buzzerPin, 0);
 
@@ -802,6 +1296,20 @@ void setup() {
   prefs.begin("settings", false);
   feedbackMode = (FeedbackMode)prefs.getUInt("fbmode", 0);
   prefs.end();
+
+  // Start Open Wi-Fi AP (SSID: Braillify, No Password)
+  WiFi.softAP("Braillify", "");
+  
+  // Start Captive Portal DNS redirection
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+
+  // Web Server Routes
+  server.on("/", handleRoot);
+  server.on("/api/state", handleApiState);
+  server.on("/api/key", handleApiKey);
+  server.on("/api/setcursor", handleApiSetCursor);
+  server.onNotFound(handleRoot); // Captive Portal redirect
+  server.begin();
 
   startUP();
 
@@ -821,77 +1329,45 @@ void vibrate(int durationMs, int strength) {
 void sound(int freq, int dur) {
   unsigned long now = millis();
   if (now - lastBeep >= debounceMillis) {
-
-    if (feedbackMode != VIBRATE_ONLY) {
-      tone(buzzerPin, freq, dur);
-    }
-
-    if (feedbackMode != SOUND_ONLY) {
-      vibrate(200, 230);
-    }
-
+    if (feedbackMode != VIBRATE_ONLY) tone(buzzerPin, freq, dur);
+    if (feedbackMode != SOUND_ONLY) vibrate(200, 230);
     lastBeep = now;
   }
 }
 
 void startupTone() {
-  sound(1500, 120);
-  delay(150);
-  sound(2000, 120);
-  delay(150);
-  sound(2500, 160);
-  delay(200);
+  sound(1500, 120); delay(150);
+  sound(2000, 120); delay(150);
+  sound(2500, 160); delay(200);
 }
 void saveTone() {
-  sound(2000, 60);
-  delay(200);
-  sound(2400, 60);
-  delay(200);
-  sound(2800, 80);
-  delay(300);
+  sound(2000, 60); delay(200);
+  sound(2400, 60); delay(200);
+  sound(2800, 80); delay(300);
 }
 void loadTone() {
-  sound(2800, 60); 
-  delay(200);
-  sound(2400, 60);
-  delay(200);
-  sound(2000, 80);
-  delay(300);
+  sound(2800, 60); delay(200);
+  sound(2400, 60); delay(200);
+  sound(2000, 80); delay(300);
 }
 void btTone() {
-  sound(2400, 60);
-  delay(200);
-  sound(2800, 60);
-  delay(200);
-  sound(3200, 80);
-  delay(300);
+  sound(2400, 60); delay(200);
+  sound(2800, 60); delay(200);
+  sound(3200, 80); delay(300);
 }
 void btdTone() {
-  sound(3200, 60); 
-  delay(200);
-  sound(2800, 60);
-  delay(200);
-  sound(2400, 60);
-  delay(300);
+  sound(3200, 60); delay(200);
+  sound(2800, 60); delay(200);
+  sound(2400, 60); delay(300);
 }
 void enterTone() {
-  sound(1600, 60); 
-  delay(100);
-  sound(1600, 60);
-  delay(100);
+  sound(1600, 60); delay(100);
+  sound(1600, 60); delay(100);
 }
 void modeTone() {
-  sound(2000, 120);
-  delay(150);
-  sound(2500, 160);
-  delay(300);
+  sound(2000, 120); delay(150);
+  sound(2500, 160); delay(300);
 }
-#define C 2093
-#define D 2349
-#define E 2637
-#define F 2794
-#define G 3136
-#define A 3520
 
 char getHeldKey() {
   for (byte r = 0; r < ROWS; r++) {
@@ -901,18 +1377,19 @@ char getHeldKey() {
       for (byte c = 0; c < COLS; c++) {
           pinMode(colPins[c], INPUT_PULLUP);
           if (digitalRead(colPins[c]) == LOW) {
-              // found pressed key
               pinMode(rowPins[r], INPUT);
               return keys[r][c];
           }
       }
-
       pinMode(rowPins[r], INPUT);
   }
   return NO_KEY;
 }
 
 void loop() {
+  dnsServer.processNextRequest();
+  server.handleClient();
+
   char key = getHeldKey();  
   unsigned long now = millis();
 
@@ -924,8 +1401,6 @@ void loop() {
   if (bluetoothEnabled) {
       if (bleKeyboard.isConnected()) {
           if (!wasConnected) {
-              // Host just connected
-              Serial.println("Host Connected!");
               lcd.setCursor(0,0);
               lcd.print("Host Connected! ");
               btTone();
@@ -937,8 +1412,6 @@ void loop() {
           wasConnected = true;
       } else {
           if (wasConnected) {
-              // Host just disconnected
-              Serial.println("Host Disconnected!");
               lcd.setCursor(0,0);
               lcd.print("Disconnected!    "); 
               btdTone();
@@ -963,52 +1436,21 @@ void loop() {
           keyPressTime = now;
           nextRepeatTime = now + holdDelay;
           handleKeyPress(key);
-            switch (key) {
-              case '2':
-              case '5':
-              case '8':
-              case '3':
-              case '6':
-              case '9':
-                  if (hashPending) {
-                      hashPending = false;
-                      brailleBits = 0;
-                  }
-                  if (key == '2') sound(C, 70);
-                  else if (key == '5') sound(D, 70);
-                  else if (key == '8') sound(E, 70);
-                  else if (key == '3') sound(F, 70);
-                  else if (key == '6') sound(G, 70);
-                  else if (key == '9') sound(A, 70);
-                  break;
-            }
 
-          if (key == '#') lastKey = NO_KEY; 
-          if (key == '#') {
-            enterTone();
-          } else if (key == '0' || key == '7' || key == 'C'|| key == '1'|| key == '4') {
-            sound(1800, 70);
-          } else if (key == 'D') {
-            sound(2100, 70);
-          } else if (key == '*') {
-            modeTone();
-          }
+          if (key == '#') lastKey = NO_KEY;
       } else if (now >= nextRepeatTime) {
-          // only repeat these keys
           if (key == '0' || key == 'D' || key == '7' || key == 'C') {
               handleKeyPress(key);
               nextRepeatTime = now + repeatRate;
           }
       }
   } else {
-      lastKey = NO_KEY; // key released
+      lastKey = NO_KEY;
   }
 }
 
 void handleHashSinglePress() {
     String out = brailleToChar(brailleBits);
-    Serial.print("BrailleBits: "); Serial.print(out); Serial.print(" ");
-    Serial.print(brailleBits, DEC); Serial.print(" "); Serial.println(brailleBits, BIN);
 
     if (out != "") {
         if (fullBuffer.length() + out.length() >= MAX_BUFFER) return;
@@ -1028,7 +1470,7 @@ void handleHashSinglePress() {
 }
 
 void handleHashDoublePress() {
-    insertAtCursor(' ');
+    insertAtCursor(' ', 0);
     if (bluetoothEnabled && bleKeyboard.isConnected()) {
         bleKeyboard.write(KEY_RETURN);
     }
@@ -1049,21 +1491,102 @@ void showFeedbackMode() {
   redrawLCDLine();
 }
 
+void toggleBluetooth() {
+    if (!bluetoothEnabled) {
+        bleKeyboard.begin();
+        bluetoothEnabled = true;
+        lcd.setCursor(0,0);
+        lcd.print("BT HID enabled!");
+        startupTone();
+        int barWidth = 16;
+        int speed = 15;
+        for (int i = 0; i <= barWidth; i++) {
+            lcd.setCursor(0, 1);
+            for (int j = 0; j < barWidth; j++) {
+                if (j <= i) lcd.print("#");
+                else lcd.print(" ");
+            }
+            delay(speed);
+        }
+        scrollWindow();
+        redrawLCDLine();
+
+        unsigned long startTime = millis();
+        lcd.setCursor(0,0);
+        lcd.print("Waiting for host");
+
+        while (!bleKeyboard.isConnected()) {
+            dnsServer.processNextRequest();
+            server.handleClient();
+            unsigned long elapsed = (millis() - startTime) / 1000;
+
+            lcd.setCursor(0,1);
+            lcd.print(elapsed);
+            lcd.print(" sec ");
+
+            if (elapsed >= 45) {
+                bleKeyboard.end();
+                bluetoothEnabled = false;
+
+                lcd.setCursor(0,0);
+                lcd.print("BT Timeout       ");
+                lcd.setCursor(0,1);
+                lcd.print("Turning off...   ");
+                btdTone();
+                delay(2000);
+                btStop();
+
+                scrollWindow();
+                redrawLCDLine();
+                updateLCDMode();
+                return;
+            }
+            delay(50);
+        }
+        scrollWindow();
+        redrawLCDLine();
+        updateLCDMode();
+    } else {
+        bluetoothEnabled = false;
+        btStop();
+        lcd.setCursor(0,0);
+        lcd.print("BT HID disabled!");
+        btdTone();
+        int barWidth = 16;
+        int speed = 15;
+        for (int i = 0; i <= barWidth; i++) {
+            lcd.setCursor(0, 1);
+            for (int j = 0; j < barWidth; j++) {
+                if (j <= i) lcd.print("#");
+                else lcd.print(" ");
+            }
+            delay(speed);
+        }
+        scrollWindow();
+        redrawLCDLine();
+        updateLCDMode();
+        delay(100);
+        BleKeyboard bleKeyboard("Braillify", "Maker", 100);
+    }
+}
+
+// Keypress handling: Works for physical keypad AND web API clicks
 void handleKeyPress(char key) {
     switch(key) {
-        case '*': cycleMode(); break;
+        case '*': 
+          cycleMode(); 
+          modeTone();
+          break;
 
-        // Braille dots - single press only
-        case '2': brailleBits |= 1;   break;   // dot 1
-        case '5': brailleBits |= 2;   break;   // dot 2
-        case '8': brailleBits |= 4;   break;   // dot 3
-        case '3': brailleBits |= 8;   break;   // dot 4
-        case '6': brailleBits |= 16;  break;   // dot 5
-        case '9': brailleBits |= 32;  break;   // dot 6
+        case '2': brailleBits |= 1;  sound(C, 70); break; // dot 1
+        case '5': brailleBits |= 2;  sound(D, 70); break; // dot 2
+        case '8': brailleBits |= 4;  sound(E, 70); break; // dot 3
+        case '3': brailleBits |= 8;  sound(F, 70); break; // dot 4
+        case '6': brailleBits |= 16; sound(G, 70); break; // dot 5
+        case '9': brailleBits |= 32; sound(A, 70); break; // dot 6
 
         case '4':
           feedbackMode = (FeedbackMode)((feedbackMode + 1) % 2);
-
           prefs.begin("settings", false);
           prefs.putUInt("fbmode", feedbackMode);
           prefs.end();
@@ -1077,7 +1600,8 @@ void handleKeyPress(char key) {
           showFeedbackMode();
           break;
 
-        case '0': // space
+        case '0':
+            sound(1800, 70);
             handleSpaceKeyDirect();
             insertSpaceAtCursor();
             if (currentMode == AUTO) currentMode = TEXT;
@@ -1090,10 +1614,11 @@ void handleKeyPress(char key) {
             contractionPrefix = 0;
             break;
 
-        case '#': { // braille -> char
+        case '#': {
+            enterTone();
             unsigned long now = millis();
             if (hashPending && (now - hashPressTime < hashDebounceTime)) {
-                hashPending = false;  // cancel single
+                hashPending = false;
                 handleHashDoublePress();
                 brailleBits = 0;
                 break;
@@ -1103,101 +1628,15 @@ void handleKeyPress(char key) {
             break;
         }
 
-        case 'D': backspaceAtCursor(); break;
-        case '7': moveCursorLeft(); break;
-        case 'C': moveCursorRight(); break;
+        case 'D': sound(2100, 70); backspaceAtCursor(); break;
+        case '7': sound(1800, 70); moveCursorLeft(); break;
+        case 'C': sound(1800, 70); moveCursorRight(); break;
 
         case 'A': saveLineToEEPROM(); break;
         case 'B': loadLineFromEEPROM(); break;
-
-        case '1':
-            if (!bluetoothEnabled) {
-                bleKeyboard.begin();
-                bluetoothEnabled = true;
-                lcd.setCursor(0,0);
-                lcd.print("BT HID enabled!");
-                Serial.println("BT HID enabled!");
-                startupTone();
-                int barWidth = 16;
-                int speed = 15; // milliseconds per step
-                for (int i = 0; i <= barWidth; i++) {
-                    lcd.setCursor(0, 1); // bottom row
-                    for (int j = 0; j < barWidth; j++) {
-                        if (j <= i) lcd.print("#");
-                        else lcd.print(" ");
-                    }
-                    delay(speed);
-                }
-                scrollWindow();
-                redrawLCDLine();
-
-                unsigned long startTime = millis();
-                lcd.setCursor(0,0);
-                lcd.print("Waiting for host");
-
-                while (!bleKeyboard.isConnected()) {
-                    unsigned long elapsed = (millis() - startTime) / 1000;
-
-                    // show seconds
-                    lcd.setCursor(0,1);
-                    lcd.print(elapsed);
-                    lcd.print(" sec ");
-
-                    // check for timeout (45 seconds)
-                    if (elapsed >= 45) {
-                        // Disable BT
-                        bleKeyboard.end();
-                        bluetoothEnabled = false;
-
-                        // Show timeout message
-                        lcd.setCursor(0,0);
-                        lcd.print("BT Timeout       ");
-                        lcd.setCursor(0,1);
-                        lcd.print("Turning off...   ");
-                        btdTone();
-                        delay(2000);
-                        bluetoothEnabled = false;
-                        btStop();
-
-
-                        scrollWindow();
-                        redrawLCDLine();
-                        updateLCDMode();
-                        return;
-                    }
-                    delay(50);
-                }
-                scrollWindow();
-                redrawLCDLine();
-                updateLCDMode();
-            } else {
-                //bleKeyboard.end();
-                bluetoothEnabled = false;
-                btStop();
-                lcd.setCursor(0,0);
-                lcd.print("BT HID disabled!");
-                Serial.println("BT HID disabled!");
-                btdTone();
-                int barWidth = 16;
-                int speed = 15; // milliseconds per step
-                for (int i = 0; i <= barWidth; i++) {
-                    lcd.setCursor(0, 1); // bottom row
-                    for (int j = 0; j < barWidth; j++) {
-                        if (j <= i) lcd.print("#");
-                        else lcd.print(" ");
-                    }
-                    delay(speed);
-                }
-                scrollWindow();
-                redrawLCDLine();
-                updateLCDMode();
-                delay(100);
-                BleKeyboard bleKeyboard("Braillify", "Maker", 100);
-            }
-            break;
+        case '1': sound(1800, 70); toggleBluetooth(); break;
 
         default: break;
     }
-    
     lcd.setCursor(getLcdCursor(), 1);
 }
