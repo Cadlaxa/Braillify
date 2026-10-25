@@ -5,6 +5,9 @@ Braille to Text device for deciphering braille system to readable text format
 - @prettyvhal
 - @markclarence13
 - joven angeles
+---
+- Build with esp32 2.0.14 board
+- BLE keyboard module: [ESP32-BLE-Keyboard](https://github.com/T-vK/ESP32-BLE-Keyboard)
 
 ## Todo: Software
 - [x] Braille to English System
