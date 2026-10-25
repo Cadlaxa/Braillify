@@ -195,25 +195,22 @@ char brailleToNumber(byte b) {
   return '?';
 }
 
-// Reverse lookup: converts any ASCII character to its 6-dot Braille bitmask
+// Reverse lookup: converts ASCII char to 6-dot bitmask
 byte charToBraille(char c) {
   if (c == ' ') return 0;
   char lowerC = c;
   if (lowerC >= 'A' && lowerC <= 'Z') lowerC += 32;
 
-  // Search single letters
   for (int i = 0; i < 26; i++) {
     if (brailleTextTable[i][0] == lowerC && brailleTextTable[i][1] == '\0') {
       return brailleDotsTable[i];
     }
   }
-  // Search numbers
   for (int i = 0; i < 10; i++) {
     if (brailleNumChars[i] == c) {
       return brailleNumDots[i];
     }
   }
-  // Search special symbols
   for (int i = 0; i < 20; i++) {
     if (strlen(specialOutput[i]) == 1 && specialOutput[i][0] == c) {
       return specialDots[i];
@@ -429,12 +426,9 @@ void insertAtCursor(char c, byte brailleCell) {
     for (int i = fullBuffer.length() - 1; i > cursorPos; i--) {
         fullBufferBraille[i] = fullBufferBraille[i - 1];
     }
-    
-    // Auto-fallback if brailleCell bitmask wasn't provided
     if (brailleCell == 0 && c != ' ') {
       brailleCell = charToBraille(c);
     }
-
     fullBufferBraille[cursorPos] = brailleCell;
     cursorPos++;
     scrollWindow();
@@ -565,7 +559,6 @@ void loadLineFromEEPROM() {
         delay(speed);
     }
 
-    // Insert loaded text with Braille dot bitmask mapping
     for (int i = 0; i < loaded.length(); i++) {
         insertAtCursor(loaded[i], charToBraille(loaded[i])); 
     }
@@ -813,7 +806,7 @@ void startUP() {
 }
 
 // -------------------------------------------------------------
-// LIGHT THEME HTML UI WITH STACKED CHARACTER & AUTO BROWSER LAUNCH
+// HTML UI WITH SEPARATE MODAL FOR FLASHCARD LEARNING MODE
 // -------------------------------------------------------------
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>BRAILLIFY WEB CONTROLLER</title>
@@ -828,17 +821,51 @@ const char index_html[] PROGMEM = R"rawliteral(
   --blue-light: #e3f2fd;
   --blue: #0288d1;
   --green: #4caf50;
+  --red: #f44336;
   --lcd-bg: #e8f5e9;
   --lcd-text: #1b4332;
 }
 *{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif}
 body{background:var(--bg);color:var(--text);display:flex;justify-content:center;align-items:center;min-height:100vh;padding:15px}
-.container{width:100%;max-width:480px;background:var(--panel);border:3px solid var(--border);box-shadow:6px 6px 0px var(--border);border-radius:12px;padding:20px}
-.header{text-align:center;border-bottom:2px dashed var(--border);padding-bottom:12px;margin-bottom:16px}
-.header h1{font-size:1.6rem;letter-spacing:2px;color:var(--text);font-weight:900;font-family:'Courier New',monospace}
-.header .sub{font-size:.75rem;color:var(--orange-dark);font-weight:bold;margin-top:2px}
+.container{width:100%;max-width:480px;background:var(--panel);border:3px solid var(--border);box-shadow:6px 6px 0px var(--border);border-radius:12px;padding:20px;position:relative}
+.header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px dashed var(--border);padding-bottom:12px;margin-bottom:16px}
+.header-title h1{font-size:1.5rem;letter-spacing:1px;color:var(--text);font-weight:900;font-family:'Courier New',monospace}
+.header-title .sub{font-size:.7rem;color:var(--orange-dark);font-weight:bold}
 
-/* Full Text Buffer Section with Stacked Braille Subscript */
+.modal-trigger-btn{background:#e8f5e9;border:2px solid var(--border);color:#2e7d32;font-size:0.75rem;font-weight:bold;padding:6px 10px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:4px;box-shadow:2px 2px 0px var(--border);transition:all .05s}
+.modal-trigger-btn:active{transform:translate(1px,1px);box-shadow:0px 0px 0px var(--border)}
+
+/* Modal Backdrop & Outer Container */
+.modal-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(17,24,39,0.5);backdrop-filter:blur(3px);display:none;justify-content:center;align-items:center;z-index:999;padding:15px}
+.modal-overlay.active{display:flex}
+
+.modal-content{width:100%;max-width:420px;background:#ffffff;border:3px solid var(--border);border-radius:12px;box-shadow:8px 8px 0px var(--border);padding:20px;position:relative;animation:popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)}
+@keyframes popIn{from{transform:scale(0.8);opacity:0}to{transform:scale(1);opacity:1}}
+
+.modal-header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--border);padding-bottom:10px;margin-bottom:14px}
+.modal-title{font-size:1.1rem;font-weight:900;color:var(--blue);display:flex;align-items:center;gap:6px}
+.modal-close-btn{background:none;border:none;font-size:1.5rem;font-weight:900;color:var(--text);cursor:pointer;line-height:1;padding:0 4px}
+
+/* Flashcard Content inside Modal */
+.fc-scores{display:flex;gap:10px;font-size:0.8rem;font-weight:800;font-family:'Courier New',monospace;margin-bottom:14px;justify-content:center}
+.fc-score-badge{background:var(--blue-light);border:2px solid var(--border);padding:4px 10px;border-radius:6px}
+
+.fc-card-display{display:flex;flex-direction:column;align-items:center;background:var(--bg);border:2px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+.fc-target-label{font-size:0.75rem;font-weight:800;color:#57606a;margin-bottom:4px}
+.fc-target-char{font-size:3.5rem;font-weight:900;color:var(--orange-dark);font-family:'Courier New',monospace;line-height:1}
+
+.fc-hint-box{margin-top:8px;font-size:0.9rem;font-weight:bold;color:var(--text);display:none}
+.fc-hint-braille{font-size:2rem;line-height:1;color:var(--blue);vertical-align:middle}
+
+.fc-status-msg{font-size:0.95rem;font-weight:900;text-align:center;min-height:1.4em;margin-bottom:14px}
+.fc-status-msg.correct{color:var(--green)}
+.fc-status-msg.wrong{color:var(--red)}
+
+.fc-actions{display:flex;gap:8px}
+.fc-btn{flex:1;background:#fff3e0;border:2px solid var(--border);color:var(--orange-dark);font-size:0.8rem;font-weight:800;padding:8px;border-radius:6px;cursor:pointer;box-shadow:2px 2px 0px var(--border);text-align:center;transition:all .05s}
+.fc-btn:active{transform:translate(1px,1px);box-shadow:0px 0px 0px var(--border)}
+
+/* Full Text Buffer Section */
 .full-text-section{margin-bottom:16px}
 .section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .section-title{font-size:.8rem;color:var(--orange-dark);font-weight:bold;text-transform:uppercase}
@@ -888,10 +915,16 @@ body{background:var(--bg);color:var(--text);display:flex;justify-content:center;
 .footer{text-align:center;font-size:.7rem;font-weight:bold;color:#57606a;margin-top:14px;border-top:2px solid var(--border);padding-top:8px}
 </style></head>
 <body>
+
 <div class="container">
   <div class="header">
-    <h1>BRAILLIFY</h1>
-    <div class="sub">TACTILE HARDWARE TRANSLATOR</div>
+    <div class="header-title">
+      <h1>BRAILLIFY</h1>
+      <div class="sub">HARDWARE TRANSLATOR</div>
+    </div>
+    <button class="modal-trigger-btn" onclick="openFlashcardModal()">
+      <span>🎓 Flashcards</span>
+    </button>
   </div>
 
   <!-- Full Text Buffer Section with Subscript Braille & Buttons -->
@@ -940,7 +973,7 @@ body{background:var(--bg);color:var(--text);display:flex;justify-content:center;
     </div>
   </div>
 
-  <!-- Icon-Based Remote Keypad -->
+  <!-- Keypad Grid -->
   <div class="keypad-grid">
     <!-- Row 1 -->
     <button class="key-btn cmd" data-key="1" title="Bluetooth">
@@ -1018,12 +1051,112 @@ body{background:var(--bg);color:var(--text);display:flex;justify-content:center;
   <div class="footer">ESP32 BRAILLIFY // AP: Braillify // 192.168.4.1</div>
 </div>
 
+<!-- Interactive Flashcard Learning Modal -->
+<div class="modal-overlay" id="flashcard-modal" onclick="handleModalBackdropClick(event)">
+  <div class="modal-content">
+    <div class="modal-header">
+      <div class="modal-title">🎓 Flashcard Practice</div>
+      <button class="modal-close-btn" onclick="closeFlashcardModal()">&times;</button>
+    </div>
+    
+    <div class="fc-scores">
+      <div class="fc-score-badge">SCORE: <span id="fc-score">0</span></div>
+      <div class="fc-score-badge">STREAK: <span id="fc-streak">0</span></div>
+    </div>
+
+    <div class="fc-card-display">
+      <div class="fc-target-label">TYPE THIS CHARACTER</div>
+      <div class="fc-target-char" id="fc-target">A</div>
+      <div class="fc-hint-box" id="fc-hint">Hint: <span class="fc-hint-braille" id="fc-hint-braille">⠁</span></div>
+    </div>
+
+    <div class="fc-status-msg" id="fc-status">Set dots on keypad & press ENTER (#)</div>
+
+    <div class="fc-actions">
+      <button class="fc-btn" onclick="toggleFlashcardHint()">Toggle Hint</button>
+      <button class="fc-btn" onclick="nextFlashcardTarget()">Skip / Next</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let currentBits=0;
 let currentFullText="";
 let currentCursorPos=0;
 let holdTimer=null;
 let repeatInterval=null;
+
+// Flashcard State
+const fcAlphabet = [
+  {ch:'a', bits:1},  {ch:'b', bits:3},  {ch:'c', bits:9},  {ch:'d', bits:25}, {ch:'e', bits:17},
+  {ch:'f', bits:11}, {ch:'g', bits:27}, {ch:'h', bits:19}, {ch:'i', bits:10}, {ch:'j', bits:26},
+  {ch:'k', bits:5},  {ch:'l', bits:7},  {ch:'m', bits:13}, {ch:'n', bits:29}, {ch:'o', bits:21},
+  {ch:'p', bits:15}, {ch:'q', bits:31}, {ch:'r', bits:23}, {ch:'s', bits:14}, {ch:'t', bits:30},
+  {ch:'u', bits:37}, {ch:'v', bits:39}, {ch:'w', bits:58}, {ch:'x', bits:45}, {ch:'y', bits:61}, {ch:'z', bits:53}
+];
+
+let fcTargetIndex = 0;
+let fcScore = 0;
+let fcStreak = 0;
+let fcShowHint = false;
+let lastEvaluatedTextLen = 0;
+
+function openFlashcardModal(){
+  document.getElementById('flashcard-modal').classList.add('active');
+}
+
+function closeFlashcardModal(){
+  document.getElementById('flashcard-modal').classList.remove('active');
+}
+
+function handleModalBackdropClick(e){
+  if(e.target.id === 'flashcard-modal'){
+    closeFlashcardModal();
+  }
+}
+
+function nextFlashcardTarget(){
+  let nextIdx;
+  do {
+    nextIdx = Math.floor(Math.random() * fcAlphabet.length);
+  } while (nextIdx === fcTargetIndex);
+  
+  fcTargetIndex = nextIdx;
+  const targetObj = fcAlphabet[fcTargetIndex];
+  
+  document.getElementById('fc-target').innerText = targetObj.ch.toUpperCase();
+  document.getElementById('fc-hint-braille').innerText = String.fromCharCode(0x2800 + targetObj.bits);
+  
+  const statusEl = document.getElementById('fc-status');
+  statusEl.className = 'fc-status-msg';
+  statusEl.innerText = 'Set dots on keypad & press ENTER (#)';
+}
+
+function toggleFlashcardHint(){
+  fcShowHint = !fcShowHint;
+  document.getElementById('fc-hint').style.display = fcShowHint ? 'block' : 'none';
+}
+
+function evaluateFlashcardAnswer(producedChar){
+  if(!producedChar || producedChar.trim() === '') return;
+  const targetObj = fcAlphabet[fcTargetIndex];
+  const statusEl = document.getElementById('fc-status');
+  
+  if(producedChar.toLowerCase() === targetObj.ch){
+    fcScore += 10;
+    fcStreak += 1;
+    statusEl.className = 'fc-status-msg correct';
+    statusEl.innerText = '🎉 Correct! (+10 pts)';
+    document.getElementById('fc-score').innerText = fcScore;
+    document.getElementById('fc-streak').innerText = fcStreak;
+    setTimeout(nextFlashcardTarget, 1000);
+  } else {
+    fcStreak = 0;
+    statusEl.className = 'fc-status-msg wrong';
+    statusEl.innerText = '❌ Incorrect! Try again.';
+    document.getElementById('fc-streak').innerText = fcStreak;
+  }
+}
 
 function updateDotsUI(){
   const dots=[1,2,4,8,16,32];
@@ -1120,12 +1253,9 @@ document.querySelectorAll('.key-btn').forEach(btn => {
 function openInExternalBrowser(){
   const url = 'http://192.168.4.1';
   const isAndroid = /Android/i.test(navigator.userAgent);
-  
   if (isAndroid) {
-    // Android Intent forces opening Chrome / default standalone browser out of the captive popup
     window.location.href = 'intent://192.168.4.1#Intent;scheme=http;action=android.intent.action.VIEW;end;';
   } else {
-    // iOS / standard webview fallback
     window.open(url, '_system') || (window.location.href = url);
   }
 }
@@ -1144,7 +1274,6 @@ function speakFullText(){
     
     window.speechSynthesis.speak(utterance);
   } else {
-    // Direct trigger to launch default browser when Web Speech API is blocked/unsupported
     openInExternalBrowser();
   }
 }
@@ -1177,6 +1306,14 @@ function updateState(d){
   document.getElementById('lcd-line1').innerText = d.lcd1;
   document.getElementById('char-preview').innerText = d.preview || '~';
   renderFullText(d.fullText || "", d.cursor || 0, d.brailleArray || []);
+
+  if (d.fullText.length > lastEvaluatedTextLen) {
+    let lastChar = d.fullText.charAt(d.fullText.length - 1);
+    evaluateFlashcardAnswer(lastChar);
+    lastEvaluatedTextLen = d.fullText.length;
+  } else if (d.fullText.length < lastEvaluatedTextLen) {
+    lastEvaluatedTextLen = d.fullText.length;
+  }
 }
 
 function pollState(){
@@ -1186,6 +1323,7 @@ function pollState(){
     .catch(e => 0);
 }
 
+nextFlashcardTarget();
 setInterval(pollState, 400);
 pollState();
 </script></body></html>
@@ -1223,7 +1361,6 @@ void getSystemStateJson(String &jsonOut) {
   safeFullText.replace("\\", "\\\\");
   safeFullText.replace("\"", "\\\"");
 
-  // Build JSON Array for parallel braille pattern bitmasks with automatic fallback
   String jsonBrailleArray = "[";
   for(int i = 0; i < fullBuffer.length(); i++) {
     byte b = fullBufferBraille[i];
@@ -1297,18 +1434,14 @@ void setup() {
   feedbackMode = (FeedbackMode)prefs.getUInt("fbmode", 0);
   prefs.end();
 
-  // Start Open Wi-Fi AP (SSID: Braillify, No Password)
   WiFi.softAP("Braillify", "");
-  
-  // Start Captive Portal DNS redirection
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
 
-  // Web Server Routes
   server.on("/", handleRoot);
   server.on("/api/state", handleApiState);
   server.on("/api/key", handleApiKey);
   server.on("/api/setcursor", handleApiSetCursor);
-  server.onNotFound(handleRoot); // Captive Portal redirect
+  server.onNotFound(handleRoot);
   server.begin();
 
   startUP();
