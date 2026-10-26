@@ -8,6 +8,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
+#include <ESPmDNS.h>
+#include "web_pages.h"
 
 Preferences prefs;
 
@@ -19,6 +21,11 @@ LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 WebServer server(80);
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
+
+// Wi-Fi Configuration State
+String wifiSSID = "";
+String wifiPass = "";
+String wifiStatusMsg = "AP Mode Active (192.168.4.1)";
 
 // Keypad setup
 const byte ROWS = 4;
@@ -195,7 +202,6 @@ char brailleToNumber(byte b) {
   return '?';
 }
 
-// Reverse lookup: converts ASCII char to 6-dot bitmask
 byte charToBraille(char c) {
   if (c == ' ') return 0;
   char lowerC = c;
@@ -219,7 +225,6 @@ byte charToBraille(char c) {
   return 0;
 }
 
-// ---------- Core convert (braille cell -> output string) ----------
 String brailleToChar(byte bits) {
   byte pattern = bits;
   String out = "";
@@ -319,31 +324,20 @@ String brailleToChar(byte bits) {
       out = brailleToText(pattern);
       if (out == "~") {
           String s = specialFromBraille(pattern);
-          if (s != "0") {
-              out = String(s);
-          }
+          if (s != "0") out = String(s);
           else {
               char n = brailleToNumber(pattern);
-              if (n != '?') {
-                  out = String(n);
-              }
-              else {
-                  out = "?";
-              }
+              if (n != '?') out = String(n);
+              else out = "?";
           }
       }
   } else if (currentMode == SPECIAL) {
       String s = specialFromBraille(pattern);
-      if (s != "0") {
-          out = String(s);
-      } else {
-          out = brailleToText(pattern);
-      }
+      if (s != "0") out = String(s);
+      else out = brailleToText(pattern);
   } else if (currentMode == NUMBER) {
       char n = brailleToNumber(pattern);
-      if (n != '?') {
-          out = String(n);
-      } 
+      if (n != '?') out = String(n);
       else {
           String s = specialFromBraille(pattern);
           if (s != "") out = String(s);
@@ -367,7 +361,6 @@ String brailleToChar(byte bits) {
   return out;
 }
 
-// ---------- Temp indicator helpers ----------
 void showTempIndicator(char ch, int len) {
   lcd.setCursor(getLcdCursor(), 1);
   for (int i = 0; i < len && getLcdCursor() + i < 16; i++) {
@@ -390,7 +383,6 @@ void clearTempIndicator() {
   indicatorLength = 0;
 }
 
-// ---------- Editor display & buffer helpers ----------
 int getLcdCursor() {
   int lcdCursor = cursorPos - windowStart;
   if (lcdCursor < 0) lcdCursor = 0;
@@ -467,6 +459,7 @@ void moveCursorLeft() {
       }
   }
 }
+
 void moveCursorRight() {
   if (cursorPos < fullBuffer.length()) {
       cursorPos++;
@@ -805,533 +798,72 @@ void startUP() {
   redrawLCDLine();
 }
 
-// -------------------------------------------------------------
-// HTML UI WITH SEPARATE MODAL FOR FLASHCARD LEARNING MODE
-// -------------------------------------------------------------
-const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>BRAILLIFY WEB CONTROLLER</title>
-<style>
-:root {
-  --bg: #f0f4f8;
-  --panel: #ffffff;
-  --text: #111827;
-  --border: #111827;
-  --orange: #ff9800;
-  --orange-dark: #e65100;
-  --blue-light: #e3f2fd;
-  --blue: #0288d1;
-  --green: #4caf50;
-  --red: #f44336;
-  --lcd-bg: #e8f5e9;
-  --lcd-text: #1b4332;
-}
-*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif}
-body{background:var(--bg);color:var(--text);display:flex;justify-content:center;align-items:center;min-height:100vh;padding:15px}
-.container{width:100%;max-width:480px;background:var(--panel);border:3px solid var(--border);box-shadow:6px 6px 0px var(--border);border-radius:12px;padding:20px;position:relative}
-.header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px dashed var(--border);padding-bottom:12px;margin-bottom:16px}
-.header-title h1{font-size:1.5rem;letter-spacing:1px;color:var(--text);font-weight:900;font-family:'Courier New',monospace}
-.header-title .sub{font-size:.7rem;color:var(--orange-dark);font-weight:bold}
-
-.modal-trigger-btn{background:#e8f5e9;border:2px solid var(--border);color:#2e7d32;font-size:0.75rem;font-weight:bold;padding:6px 10px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:4px;box-shadow:2px 2px 0px var(--border);transition:all .05s}
-.modal-trigger-btn:active{transform:translate(1px,1px);box-shadow:0px 0px 0px var(--border)}
-
-/* Modal Backdrop & Outer Container */
-.modal-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(17,24,39,0.5);backdrop-filter:blur(3px);display:none;justify-content:center;align-items:center;z-index:999;padding:15px}
-.modal-overlay.active{display:flex}
-
-.modal-content{width:100%;max-width:420px;background:#ffffff;border:3px solid var(--border);border-radius:12px;box-shadow:8px 8px 0px var(--border);padding:20px;position:relative;animation:popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)}
-@keyframes popIn{from{transform:scale(0.8);opacity:0}to{transform:scale(1);opacity:1}}
-
-.modal-header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--border);padding-bottom:10px;margin-bottom:14px}
-.modal-title{font-size:1.1rem;font-weight:900;color:var(--blue);display:flex;align-items:center;gap:6px}
-.modal-close-btn{background:none;border:none;font-size:1.5rem;font-weight:900;color:var(--text);cursor:pointer;line-height:1;padding:0 4px}
-
-/* Flashcard Content inside Modal */
-.fc-scores{display:flex;gap:10px;font-size:0.8rem;font-weight:800;font-family:'Courier New',monospace;margin-bottom:14px;justify-content:center}
-.fc-score-badge{background:var(--blue-light);border:2px solid var(--border);padding:4px 10px;border-radius:6px}
-
-.fc-card-display{display:flex;flex-direction:column;align-items:center;background:var(--bg);border:2px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
-.fc-target-label{font-size:0.75rem;font-weight:800;color:#57606a;margin-bottom:4px}
-.fc-target-char{font-size:3.5rem;font-weight:900;color:var(--orange-dark);font-family:'Courier New',monospace;line-height:1}
-
-.fc-hint-box{margin-top:8px;font-size:0.9rem;font-weight:bold;color:var(--text);display:none}
-.fc-hint-braille{font-size:2rem;line-height:1;color:var(--blue);vertical-align:middle}
-
-.fc-status-msg{font-size:0.95rem;font-weight:900;text-align:center;min-height:1.4em;margin-bottom:14px}
-.fc-status-msg.correct{color:var(--green)}
-.fc-status-msg.wrong{color:var(--red)}
-
-.fc-actions{display:flex;gap:8px}
-.fc-btn{flex:1;background:#fff3e0;border:2px solid var(--border);color:var(--orange-dark);font-size:0.8rem;font-weight:800;padding:8px;border-radius:6px;cursor:pointer;box-shadow:2px 2px 0px var(--border);text-align:center;transition:all .05s}
-.fc-btn:active{transform:translate(1px,1px);box-shadow:0px 0px 0px var(--border)}
-
-/* Full Text Buffer Section */
-.full-text-section{margin-bottom:16px}
-.section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.section-title{font-size:.8rem;color:var(--orange-dark);font-weight:bold;text-transform:uppercase}
-.action-btn-group{display:flex;gap:6px}
-.action-btn{background:#fff3e0;border:2px solid var(--border);color:var(--orange-dark);font-size:0.75rem;font-weight:bold;padding:4px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;box-shadow:1px 2px 0px var(--border);transition:all .05s}
-.action-btn:active{transform:translate(1px,1px);box-shadow:0px 0px 0px var(--border)}
-.action-btn svg{width:14px;height:14px;fill:currentColor}
-
-/* Scrollable Container for Stacked Pairs */
-.full-text-box{background:#ffffff;border:2px solid var(--border);border-radius:8px;padding:10px;min-height:64px;max-height:120px;overflow-y:auto;overflow-x:hidden;box-shadow:inset 0 0 4px rgba(0,0,0,0.06);display:flex;flex-wrap:wrap;align-content:flex-start;gap:2px}
-.char-pair{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;padding:2px 4px;border-radius:4px;user-select:none;min-width:18px;transition:background 0.1s}
-.char-pair:hover{background:var(--blue-light)}
-.char-pair.cursor-here{background:var(--orange);color:#ffffff;font-weight:bold;animation:blink 1s infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:0.4}}
-
-.char-pair .top-char{font-size:1.1rem;font-weight:900;font-family:'Courier New',monospace;line-height:1}
-.char-pair .sub-braille{font-size:0.85rem;line-height:1;margin-top:2px;opacity:0.85;font-family:sans-serif}
-
-/* LCD Display Box */
-.lcd-frame{background:var(--lcd-bg);border:3px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px;box-shadow:inset 0 0 5px rgba(0,0,0,0.08)}
-.lcd-line{font-size:1.2rem;color:var(--lcd-text);letter-spacing:2px;white-space:pre;font-weight:bold;font-family:'Courier New',monospace;min-height:1.4em}
-
-/* Visual Cell & Transformed Text Banner */
-.status-card{display:flex;align-items:center;justify-content:space-between;background:var(--blue-light);border:2px solid var(--border);padding:14px;border-radius:8px;margin-bottom:16px}
-.cell-preview-box{display:flex;align-items:center;gap:16px}
-.braille-pattern-cell{display:grid;grid-template-columns:repeat(2,16px);grid-gap:8px;background:#ffffff;border:2px solid var(--border);padding:8px;border-radius:6px}
-.v-dot{width:16px;height:16px;border-radius:50%;background:#d0d7de;border:1.5px solid var(--border);transition:all .15s}
-.v-dot.active{background:var(--green);box-shadow:0 0 6px rgba(76,175,80,0.6)}
-
-.char-output-box{display:flex;flex-direction:column;align-items:flex-start}
-.char-label{font-size:0.7rem;font-weight:bold;color:var(--text);text-transform:uppercase;letter-spacing:1px}
-.char-val{font-size:1.8rem;font-weight:900;color:var(--orange-dark);font-family:'Courier New',monospace}
-
-.bit-badge{display:flex;flex-direction:column;align-items:flex-end;font-size:0.75rem;font-weight:bold;font-family:'Courier New',monospace}
-.bit-badge span{color:var(--blue)}
-
-/* Keypad Grid with SVG Icons */
-.keypad-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.key-btn{background:#ffffff;border:2px solid var(--border);color:var(--text);height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;box-shadow:2px 3px 0px var(--border);transition:all .05s;user-select:none;-webkit-touch-callout:none}
-.key-btn:active{transform:translate(2px,2px);box-shadow:0px 0px 0px var(--border);background:var(--blue-light)}
-.key-btn.cmd{background:#fff3e0;border-color:var(--border);color:var(--orange-dark)}
-.key-btn.cmd:active{background:var(--orange);color:#ffffff}
-.key-btn svg{width:22px;height:22px;fill:currentColor}
-.key-label{font-size:0.65rem;font-weight:800;margin-top:2px;font-family:'Courier New',monospace}
-.dot-key-num{font-size:1.1rem;font-weight:900;font-family:'Courier New',monospace}
-.dot-key-sub{font-size:0.6rem;color:#57606a;font-weight:700}
-.footer{text-align:center;font-size:.7rem;font-weight:bold;color:#57606a;margin-top:14px;border-top:2px solid var(--border);padding-top:8px}
-</style></head>
-<body>
-
-<div class="container">
-  <div class="header">
-    <div class="header-title">
-      <h1>BRAILLIFY</h1>
-      <div class="sub">HARDWARE TRANSLATOR</div>
-    </div>
-    <button class="modal-trigger-btn" onclick="openFlashcardModal()">
-      <span>🎓 Flashcards</span>
-    </button>
-  </div>
-
-  <!-- Full Text Buffer Section with Subscript Braille & Buttons -->
-  <div class="full-text-section">
-    <div class="section-header">
-      <div class="section-title">> Transformed Full Text</div>
-      <div class="action-btn-group">
-        <button class="action-btn" id="tts-btn" onclick="speakFullText()" title="Read Text Aloud">
-          <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-          <span id="tts-btn-text">Speak</span>
-        </button>
-        <button class="action-btn" id="copy-btn" onclick="copyFullText()" title="Copy to Clipboard">
-          <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-          <span id="copy-btn-text">Copy Text</span>
-        </button>
-      </div>
-    </div>
-    <div class="full-text-box" id="full-text-box"></div>
-  </div>
-
-  <!-- Physical 16x2 LCD Mirror -->
-  <div class="lcd-frame">
-    <div class="lcd-line" id="lcd-line0">Mode: AUTO     </div>
-    <div class="lcd-line" id="lcd-line1">_               </div>
-  </div>
-
-  <!-- Visual Cell & Transformed Text -->
-  <div class="status-card">
-    <div class="cell-preview-box">
-      <div class="braille-pattern-cell">
-        <div class="v-dot" id="vdot1"></div>
-        <div class="v-dot" id="vdot4"></div>
-        <div class="v-dot" id="vdot2"></div>
-        <div class="v-dot" id="vdot5"></div>
-        <div class="v-dot" id="vdot3"></div>
-        <div class="v-dot" id="vdot6"></div>
-      </div>
-      <div class="char-output-box">
-        <div class="char-label">Cell Preview</div>
-        <div class="char-val" id="char-preview">~</div>
-      </div>
-    </div>
-    <div class="bit-badge">
-      <div>BITS: <span id="bit-val">0b000000</span></div>
-      <div>DEC: <span id="dec-val">0</span></div>
-    </div>
-  </div>
-
-  <!-- Keypad Grid -->
-  <div class="keypad-grid">
-    <!-- Row 1 -->
-    <button class="key-btn cmd" data-key="1" title="Bluetooth">
-      <svg viewBox="0 0 24 24"><path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 12.34L13 20.05v-3.76l1.88 1.88z"/></svg>
-      <span class="key-label">BT</span>
-    </button>
-    <button class="key-btn" data-key="2">
-      <span class="dot-key-num">2</span>
-      <span class="dot-key-sub">• Dot 1</span>
-    </button>
-    <button class="key-btn" data-key="3">
-      <span class="dot-key-num">3</span>
-      <span class="dot-key-sub">• Dot 4</span>
-    </button>
-    <button class="key-btn cmd" data-key="A" title="Save Memory">
-      <svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
-      <span class="key-label">SAVE</span>
-    </button>
-
-    <!-- Row 2 -->
-    <button class="key-btn cmd" data-key="4" title="Mute Toggle">
-      <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-      <span class="key-label">MUTE</span>
-    </button>
-    <button class="key-btn" data-key="5">
-      <span class="dot-key-num">5</span>
-      <span class="dot-key-sub">• Dot 2</span>
-    </button>
-    <button class="key-btn" data-key="6">
-      <span class="dot-key-num">6</span>
-      <span class="dot-key-sub">• Dot 5</span>
-    </button>
-    <button class="key-btn cmd" data-key="B" title="Load Memory">
-      <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
-      <span class="key-label">LOAD</span>
-    </button>
-
-    <!-- Row 3 -->
-    <button class="key-btn cmd" data-key="7" title="Cursor Left">
-      <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
-      <span class="key-label">LEFT</span>
-    </button>
-    <button class="key-btn" data-key="8">
-      <span class="dot-key-num">8</span>
-      <span class="dot-key-sub">• Dot 3</span>
-    </button>
-    <button class="key-btn" data-key="9">
-      <span class="dot-key-num">9</span>
-      <span class="dot-key-sub">• Dot 6</span>
-    </button>
-    <button class="key-btn cmd" data-key="C" title="Cursor Right">
-      <svg viewBox="0 0 24 24"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
-      <span class="key-label">RIGHT</span>
-    </button>
-
-    <!-- Row 4 -->
-    <button class="key-btn cmd" data-key="*" title="Cycle Mode">
-      <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
-      <span class="key-label">MODE</span>
-    </button>
-    <button class="key-btn" data-key="0" title="Space">
-      <svg viewBox="0 0 24 24"><path d="M18 9v4H6V9H4v6h16V9h-2z"/></svg>
-      <span class="key-label">SPACE</span>
-    </button>
-    <button class="key-btn cmd" data-key="#" title="Enter / Confirm Cell">
-      <svg viewBox="0 0 24 24"><path d="M19 7v4H5.83l3.58-3.59L8 6l-6 6 6 6 1.41-1.41L5.83 13H21V7h-2z"/></svg>
-      <span class="key-label">ENTER</span>
-    </button>
-    <button class="key-btn cmd" data-key="D" title="Backspace / Delete">
-      <svg viewBox="0 0 24 24"><path d="M22 3H7c-.69 0-1.23.35-1.59.88L0 12l5.41 8.11c.36.53.9.89 1.59.89h15c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H7.07L2.4 12l4.66-7H22v14zm-11.59-2L14 13.41 17.59 17 19 15.59 15.41 12 19 8.41 17.59 7 14 10.59 10.41 7 9 8.41 12.59 12 9 15.59z"/></svg>
-      <span class="key-label">DEL</span>
-    </button>
-  </div>
-
-  <div class="footer">ESP32 BRAILLIFY // AP: Braillify // 192.168.4.1</div>
-</div>
-
-<!-- Interactive Flashcard Learning Modal -->
-<div class="modal-overlay" id="flashcard-modal" onclick="handleModalBackdropClick(event)">
-  <div class="modal-content">
-    <div class="modal-header">
-      <div class="modal-title">🎓 Flashcard Practice</div>
-      <button class="modal-close-btn" onclick="closeFlashcardModal()">&times;</button>
-    </div>
-    
-    <div class="fc-scores">
-      <div class="fc-score-badge">SCORE: <span id="fc-score">0</span></div>
-      <div class="fc-score-badge">STREAK: <span id="fc-streak">0</span></div>
-    </div>
-
-    <div class="fc-card-display">
-      <div class="fc-target-label">TYPE THIS CHARACTER</div>
-      <div class="fc-target-char" id="fc-target">A</div>
-      <div class="fc-hint-box" id="fc-hint">Hint: <span class="fc-hint-braille" id="fc-hint-braille">⠁</span></div>
-    </div>
-
-    <div class="fc-status-msg" id="fc-status">Set dots on keypad & press ENTER (#)</div>
-
-    <div class="fc-actions">
-      <button class="fc-btn" onclick="toggleFlashcardHint()">Toggle Hint</button>
-      <button class="fc-btn" onclick="nextFlashcardTarget()">Skip / Next</button>
-    </div>
-  </div>
-</div>
-
-<script>
-let currentBits=0;
-let currentFullText="";
-let currentCursorPos=0;
-let holdTimer=null;
-let repeatInterval=null;
-
-// Flashcard State
-const fcAlphabet = [
-  {ch:'a', bits:1},  {ch:'b', bits:3},  {ch:'c', bits:9},  {ch:'d', bits:25}, {ch:'e', bits:17},
-  {ch:'f', bits:11}, {ch:'g', bits:27}, {ch:'h', bits:19}, {ch:'i', bits:10}, {ch:'j', bits:26},
-  {ch:'k', bits:5},  {ch:'l', bits:7},  {ch:'m', bits:13}, {ch:'n', bits:29}, {ch:'o', bits:21},
-  {ch:'p', bits:15}, {ch:'q', bits:31}, {ch:'r', bits:23}, {ch:'s', bits:14}, {ch:'t', bits:30},
-  {ch:'u', bits:37}, {ch:'v', bits:39}, {ch:'w', bits:58}, {ch:'x', bits:45}, {ch:'y', bits:61}, {ch:'z', bits:53}
-];
-
-let fcTargetIndex = 0;
-let fcScore = 0;
-let fcStreak = 0;
-let fcShowHint = false;
-let lastEvaluatedTextLen = 0;
-
-function openFlashcardModal(){
-  document.getElementById('flashcard-modal').classList.add('active');
-}
-
-function closeFlashcardModal(){
-  document.getElementById('flashcard-modal').classList.remove('active');
-}
-
-function handleModalBackdropClick(e){
-  if(e.target.id === 'flashcard-modal'){
-    closeFlashcardModal();
-  }
-}
-
-function nextFlashcardTarget(){
-  let nextIdx;
-  do {
-    nextIdx = Math.floor(Math.random() * fcAlphabet.length);
-  } while (nextIdx === fcTargetIndex);
-  
-  fcTargetIndex = nextIdx;
-  const targetObj = fcAlphabet[fcTargetIndex];
-  
-  document.getElementById('fc-target').innerText = targetObj.ch.toUpperCase();
-  document.getElementById('fc-hint-braille').innerText = String.fromCharCode(0x2800 + targetObj.bits);
-  
-  const statusEl = document.getElementById('fc-status');
-  statusEl.className = 'fc-status-msg';
-  statusEl.innerText = 'Set dots on keypad & press ENTER (#)';
-}
-
-function toggleFlashcardHint(){
-  fcShowHint = !fcShowHint;
-  document.getElementById('fc-hint').style.display = fcShowHint ? 'block' : 'none';
-}
-
-function evaluateFlashcardAnswer(producedChar){
-  if(!producedChar || producedChar.trim() === '') return;
-  const targetObj = fcAlphabet[fcTargetIndex];
-  const statusEl = document.getElementById('fc-status');
-  
-  if(producedChar.toLowerCase() === targetObj.ch){
-    fcScore += 10;
-    fcStreak += 1;
-    statusEl.className = 'fc-status-msg correct';
-    statusEl.innerText = '🎉 Correct! (+10 pts)';
-    document.getElementById('fc-score').innerText = fcScore;
-    document.getElementById('fc-streak').innerText = fcStreak;
-    setTimeout(nextFlashcardTarget, 1000);
-  } else {
-    fcStreak = 0;
-    statusEl.className = 'fc-status-msg wrong';
-    statusEl.innerText = '❌ Incorrect! Try again.';
-    document.getElementById('fc-streak').innerText = fcStreak;
-  }
-}
-
-function updateDotsUI(){
-  const dots=[1,2,4,8,16,32];
-  const btnMap=[1,2,3,4,5,6];
-  dots.forEach((bit,idx)=>{
-    let dotNum=btnMap[idx];
-    let el=document.getElementById('vdot'+dotNum);
-    if(el){
-      (bit & currentBits)?el.classList.add('active'):el.classList.remove('active');
-    }
-  });
-  document.getElementById('bit-val').innerText='0b'+currentBits.toString(2).padStart(6,'0');
-  document.getElementById('dec-val').innerText=currentBits;
-}
-
-function renderFullText(text, pos, brailleArr){
-  currentFullText = text;
-  currentCursorPos = pos;
-  const container = document.getElementById('full-text-box');
-  container.innerHTML = '';
-
-  const len = text.length;
-  for(let i = 0; i <= len; i++){
-    const pairDiv = document.createElement('div');
-    pairDiv.className = 'char-pair';
-    if(i === pos){
-      pairDiv.classList.add('cursor-here');
-    }
-
-    const topChar = document.createElement('div');
-    topChar.className = 'top-char';
-    
-    const subBraille = document.createElement('div');
-    subBraille.className = 'sub-braille';
-
-    if(i < len){
-      let ch = text[i];
-      topChar.innerText = (ch === ' ') ? '\u00A0' : ch;
-      
-      let bits = (brailleArr && brailleArr[i] !== undefined) ? brailleArr[i] : 0;
-      subBraille.innerText = bits > 0 ? String.fromCharCode(0x2800 + bits) : '\u2800';
-    } else {
-      topChar.innerText = '\u00A0';
-      subBraille.innerText = '\u2800';
-    }
-
-    pairDiv.appendChild(topChar);
-    pairDiv.appendChild(subBraille);
-
-    pairDiv.onclick = () => setCursorPos(i);
-    container.appendChild(pairDiv);
-  }
-}
-
-function setCursorPos(idx){
-  fetch('/api/setcursor?pos=' + idx)
-    .then(r => r.json())
-    .then(d => updateState(d));
-}
-
-function sendKey(k){
-  fetch('/api/key?k=' + encodeURIComponent(k))
-    .then(r => r.json())
-    .then(d => updateState(d));
-}
-
-function startKeyHold(k){
-  sendKey(k);
-  if(['0','D','7','C'].includes(k)){
-    holdTimer = setTimeout(() => {
-      repeatInterval = setInterval(() => sendKey(k), 120);
-    }, 600);
-  }
-}
-
-function stopKeyHold(){
-  if(holdTimer){ clearTimeout(holdTimer); holdTimer = null; }
-  if(repeatInterval){ clearInterval(repeatInterval); repeatInterval = null; }
-}
-
-document.querySelectorAll('.key-btn').forEach(btn => {
-  const k = btn.getAttribute('data-key');
-  if(!k) return;
-
-  btn.addEventListener('mousedown', (e) => { e.preventDefault(); startKeyHold(k); });
-  btn.addEventListener('mouseup', stopKeyHold);
-  btn.addEventListener('mouseleave', stopKeyHold);
-
-  btn.addEventListener('touchstart', (e) => { e.preventDefault(); startKeyHold(k); });
-  btn.addEventListener('touchend', stopKeyHold);
-  btn.addEventListener('touchcancel', stopKeyHold);
-});
-
-function openInExternalBrowser(){
-  const url = 'http://192.168.4.1';
-  const isAndroid = /Android/i.test(navigator.userAgent);
-  if (isAndroid) {
-    window.location.href = 'intent://192.168.4.1#Intent;scheme=http;action=android.intent.action.VIEW;end;';
-  } else {
-    window.open(url, '_system') || (window.location.href = url);
-  }
-}
-
-function speakFullText(){
-  if(!currentFullText || currentFullText.trim() === '') return;
-  if('speechSynthesis' in window){
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(currentFullText);
-    utterance.rate = 0.95;
-    
-    const btnLabel = document.getElementById('tts-btn-text');
-    btnLabel.innerText = 'Speaking...';
-    utterance.onend = () => { btnLabel.innerText = 'Speak'; };
-    utterance.onerror = () => { btnLabel.innerText = 'Speak'; };
-    
-    window.speechSynthesis.speak(utterance);
-  } else {
-    openInExternalBrowser();
-  }
-}
-
-function copyFullText(){
-  const text = currentFullText;
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(text).then(() => flashCopyStatus());
-  } else {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    flashCopyStatus();
-  }
-}
-
-function flashCopyStatus(){
-  const label = document.getElementById('copy-btn-text');
-  label.innerText = 'Copied!';
-  setTimeout(() => label.innerText = 'Copy Text', 1500);
-}
-
-function updateState(d){
-  currentBits = d.bits;
-  updateDotsUI();
-  document.getElementById('lcd-line0').innerText = d.lcd0;
-  document.getElementById('lcd-line1').innerText = d.lcd1;
-  document.getElementById('char-preview').innerText = d.preview || '~';
-  renderFullText(d.fullText || "", d.cursor || 0, d.brailleArray || []);
-
-  if (d.fullText.length > lastEvaluatedTextLen) {
-    let lastChar = d.fullText.charAt(d.fullText.length - 1);
-    evaluateFlashcardAnswer(lastChar);
-    lastEvaluatedTextLen = d.fullText.length;
-  } else if (d.fullText.length < lastEvaluatedTextLen) {
-    lastEvaluatedTextLen = d.fullText.length;
-  }
-}
-
-function pollState(){
-  fetch('/api/state')
-    .then(r => r.json())
-    .then(d => updateState(d))
-    .catch(e => 0);
-}
-
-nextFlashcardTarget();
-setInterval(pollState, 400);
-pollState();
-</script></body></html>
-)rawliteral";
-
 // ---------- Web Server Endpoints ----------
 void handleRoot() {
   server.send(200, "text/html", index_html);
+}
+
+void handleApiScan() {
+  int n = WiFi.scanNetworks();
+  String json = "[";
+  for (int i = 0; i < n; ++i) {
+    json += "{";
+    json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
+    json += "\"rssi\":" + String(WiFi.RSSI(i));
+    json += "}";
+    if (i < n - 1) json += ",";
+  }
+  json += "]";
+  server.send(200, "application/json", json);
+}
+
+void handleApiConnect() {
+  if (server.hasArg("ssid")) {
+    wifiSSID = server.arg("ssid");
+    wifiPass = server.hasArg("pass") ? server.arg("pass") : "";
+
+    prefs.begin("wifi", false);
+    prefs.putString("ssid", wifiSSID);
+    prefs.putString("pass", wifiPass);
+    prefs.end();
+
+    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+    wifiStatusMsg = "Connecting to " + wifiSSID + "...";
+  }
+
+  String json = "{\"status\":\"" + wifiStatusMsg + "\"}";
+  server.send(200, "application/json", json);
+}
+
+void handleApiSetText() {
+  if (server.hasArg("text")) {
+    String oldStr = fullBuffer;
+    String incoming = server.arg("text");
+
+    // Strictly cap incoming string to MAX_BUFFER - 1 (127 characters)
+    if (incoming.length() >= MAX_BUFFER) {
+      incoming = incoming.substring(0, MAX_BUFFER - 1);
+    }
+    fullBuffer = incoming;
+
+    if (server.hasArg("pos")) {
+      cursorPos = server.arg("pos").toInt();
+      if (cursorPos < 0) cursorPos = 0;
+      if (cursorPos > fullBuffer.length()) cursorPos = fullBuffer.length();
+    } else {
+      cursorPos = fullBuffer.length();
+    }
+
+    // Safely populate Braille array within buffer limits
+    for (int i = 0; i < fullBuffer.length() && i < MAX_BUFFER; i++) {
+      fullBufferBraille[i] = charToBraille(fullBuffer[i]);
+    }
+
+    scrollWindow();
+    redrawLCDLine();
+    sendChangesToBLE(oldStr, fullBuffer);
+  }
+  handleApiState();
 }
 
 void getSystemStateJson(String &jsonOut) {
@@ -1372,6 +904,10 @@ void getSystemStateJson(String &jsonOut) {
   }
   jsonBrailleArray += "]";
 
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiStatusMsg = "Connected: " + WiFi.localIP().toString();
+  }
+
   jsonOut = "{";
   jsonOut += "\"bits\":" + String(brailleBits) + ",";
   jsonOut += "\"mode\":" + String((int)currentMode) + ",";
@@ -1380,7 +916,8 @@ void getSystemStateJson(String &jsonOut) {
   jsonOut += "\"lcd0\":\"" + line0 + "\",";
   jsonOut += "\"lcd1\":\"" + line1 + "\",";
   jsonOut += "\"fullText\":\"" + safeFullText + "\",";
-  jsonOut += "\"brailleArray\":" + jsonBrailleArray;
+  jsonOut += "\"brailleArray\":" + jsonBrailleArray + ",";
+  jsonOut += "\"wifiStatus\":\"" + wifiStatusMsg + "\"";
   jsonOut += "}";
 }
 
@@ -1430,19 +967,45 @@ void setup() {
 
   keypad.setHoldTime(holdDelay);
   EEPROM.begin(512);
+
   prefs.begin("settings", false);
   feedbackMode = (FeedbackMode)prefs.getUInt("fbmode", 0);
   prefs.end();
 
+  // Dual AP + STA Wi-Fi Mode
+  WiFi.mode(WIFI_AP_STA);
   WiFi.softAP("Braillify", "");
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
 
+  // Restore Saved Wi-Fi Credentials
+  prefs.begin("wifi", false);
+  wifiSSID = prefs.getString("ssid", "");
+  wifiPass = prefs.getString("pass", "");
+  prefs.end();
+
+  if (wifiSSID.length() > 0) {
+    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+    wifiStatusMsg = "Connecting to " + wifiSSID + "...";
+  }
+
+  // Register Web Routes
   server.on("/", handleRoot);
   server.on("/api/state", handleApiState);
   server.on("/api/key", handleApiKey);
   server.on("/api/setcursor", handleApiSetCursor);
+  server.on("/api/scan", handleApiScan);
+  server.on("/api/connect", handleApiConnect);
+  server.on("/api/settext", handleApiSetText);
   server.onNotFound(handleRoot);
   server.begin();
+
+  // Initialize mDNS Responder (http://braillify.local)
+  if (MDNS.begin("braillify")) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.println("mDNS responder started: http://braillify.local");
+  } else {
+    Serial.println("Error setting up mDNS responder!");
+  }
 
   startUP();
 
@@ -1703,7 +1266,6 @@ void toggleBluetooth() {
     }
 }
 
-// Keypress handling: Works for physical keypad AND web API clicks
 void handleKeyPress(char key) {
     switch(key) {
         case '*': 
@@ -1767,7 +1329,7 @@ void handleKeyPress(char key) {
 
         case 'A': saveLineToEEPROM(); break;
         case 'B': loadLineFromEEPROM(); break;
-        case '1': sound(1800, 70); toggleBluetooth(); break;
+        case '1': sound(1800, 70); break;
 
         default: break;
     }

@@ -8,6 +8,7 @@ Braille to Text device for deciphering braille system to readable text format
 ---
 - Build with esp32 2.0.14 board
 - BLE keyboard module: [ESP32-BLE-Keyboard](https://github.com/T-vK/ESP32-BLE-Keyboard)
+- mDNS support [http://braillify.local](http://braillify.local) (must be connected to the same wifi connection)
 
 ## Todo: Software
 - [x] Braille to English System
