@@ -15,12 +15,19 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    - name: Extract Version from braillify.ino
+      id: get_version
+      run: |
+        # Read the #define FIRMWARE_VERSION line from braillify.ino
+        VERSION=$(grep -E '#define +FIRMWARE_VERSION' braillify/braillify.ino | sed -E 's/.*"([^"]+)".*/\1/')
+        echo "FIRMWARE_VER=$VERSION" >> $GITHUB_ENV
+        echo "Extracted Firmware Version: $VERSION"
+
     - name: Prepare Firmware Artifacts
       run: |
         mkdir -p ./publish_output
-        VERSION="1.0.${{ github.run_number }}"
         cp braillify/build/esp32.esp32.esp32/braillify.ino.bin ./publish_output/firmware.bin
-        cp braillify/build/esp32.esp32.esp32/braillify.ino.bin ./publish_output/braillify-v${VERSION}.bin
+        cp braillify/build/esp32.esp32.esp32/braillify.ino.bin ./publish_output/braillify-v${{ env.FIRMWARE_VER }}.bin
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
@@ -40,6 +47,14 @@ jobs:
       contents: write
 
     steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Extract Version from braillify.ino
+      run: |
+        VERSION=$(grep -E '#define +FIRMWARE_VERSION' braillify/braillify.ino | sed -E 's/.*"([^"]+)".*/\1/')
+        echo "FIRMWARE_VER=$VERSION" >> $GITHUB_ENV
+
     - name: Download all build artifacts
       uses: actions/download-artifact@v4
       with:
@@ -48,7 +63,7 @@ jobs:
 
     - name: Generate Update Manifest JSON
       run: |
-        VERSION="1.0.${{ github.run_number }}"
+        VERSION="${{ env.FIRMWARE_VER }}"
         PUBDATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         REPO_URL="https://github.com/${{ github.repository }}"
         DOWNLOAD_URL="$REPO_URL/releases/download/v$VERSION"
@@ -65,18 +80,18 @@ jobs:
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v1.0.${{ github.run_number }}
-        name: Braillify Firmware Release v1.0.${{ github.run_number }}
+        tag_name: v${{ env.FIRMWARE_VER }}
+        name: Braillify Firmware Release v${{ env.FIRMWARE_VER }}
         body: |
-          🚀 Automatically generated release for Braillify ESP32 Firmware v1.0.${{ github.run_number }}.
+          🚀 Release for Braillify ESP32 Firmware v${{ env.FIRMWARE_VER }}.
 
           ### 📦 Artifacts Included
           * `firmware.bin` (Direct payload link for HTTP OTA updates)
-          * `braillify-v1.0.${{ github.run_number }}.bin` (Versioned firmware binary)
+          * `braillify-v${{ env.FIRMWARE_VER }}.bin` (Versioned firmware binary)
           * `manifest.json` (OTA metadata update manifest)
 
           ### 🔄 OTA Direct Download Link
-          `https://github.com/${{ github.repository }}/releases/download/v1.0.${{ github.run_number }}/firmware.bin`
+          `https://github.com/${{ github.repository }}/releases/download/v${{ env.FIRMWARE_VER }}/firmware.bin`
         files: ./artifacts/*
         draft: false
         prerelease: false

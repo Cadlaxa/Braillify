@@ -12,6 +12,8 @@
 #include <Update.h>
 #include <WiFiClientSecure.h>
 #include <HTTPUpdate.h>
+#include <HTTPClient.h>
+#define FIRMWARE_VERSION "1.0.3.1"
 
 Preferences prefs;
 
@@ -927,13 +929,59 @@ void updateFirmwareFromGitHub(const String& binUrl) {
 
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(" Downloading... ");
+  lcd.print(" Checking update");
+  lcd.setCursor(0, 1);
+  lcd.print(" v" FIRMWARE_VERSION " ... ");
   scanTone();
 
   WiFiClientSecure client;
-  client.setInsecure(); // Bypass SSL certificate verification for redirect hosts
+  client.setInsecure(); // Bypass SSL verification for GitHub and AWS S3 redirect hosts
 
-  // Force HTTPUpdate to follow redirects across domains (GitHub -> AWS S3)
+  String manifestUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/manifest.json";
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.begin(client, manifestUrl);
+
+  int httpCode = http.GET();
+  String latestVersion = "";
+
+  if (httpCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    int verIndex = payload.indexOf("\"version\": \"");
+    if (verIndex != -1) {
+      int start = verIndex + 12;
+      int end = payload.indexOf("\"", start);
+      if (end != -1) {
+        latestVersion = payload.substring(start, end);
+      }
+    }
+  }
+  http.end();
+
+  if (latestVersion.startsWith("v")) {
+    latestVersion = latestVersion.substring(1);
+  }
+
+  // 2. Compare latest release version against current FIRMWARE_VERSION
+  if (latestVersion.length() > 0 && latestVersion == FIRMWARE_VERSION) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(" Already Up-to- ");
+    lcd.setCursor(0, 1);
+    lcd.print(" Date! (v" FIRMWARE_VERSION ") ");
+    sound(2000, 100);
+    delay(2500);
+    scrollWindow();
+    redrawLCDLine();
+    updateLCDMode();
+    return;
+  }
+
+  // 3. Newer version detected or manifest bypass, proceed to flash firmware payload
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(" Downloading... ");
+
   httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   httpUpdate.rebootOnUpdate(false);
 
@@ -945,7 +993,8 @@ void updateFirmwareFromGitHub(const String& binUrl) {
     lcd.print("%   ");
   });
 
-  t_httpUpdate_return ret = httpUpdate.update(client, binUrl);
+  String targetPayloadUrl = (binUrl.length() > 0) ? binUrl : "https://github.com/Cadlaxa/Braillify/releases/latest/download/firmware.bin";
+  t_httpUpdate_return ret = httpUpdate.update(client, targetPayloadUrl);
 
   switch (ret) {
     case HTTP_UPDATE_FAILED:
