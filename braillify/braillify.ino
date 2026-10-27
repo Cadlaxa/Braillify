@@ -13,13 +13,17 @@
 #include <WiFiClientSecure.h>
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
-#define FIRMWARE_VERSION "1.0.3.1"
+#define FIRMWARE_VERSION "1.0.3.6"
 
 Preferences prefs;
 
 // LCD setup (I2C)
 #define I2C_ADDR 0x27  
 LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
+
+#define LCD_BACKLIGHT_PIN 18 // PWM Backlight Control Pin (Optional Header Hookup)
+int lcdBrightness = 100;     // 0 - 100%
+int soundVolume = 100;       // 0 - 100%
 
 // Web Server & Captive Portal DNS
 WebServer server(80);
@@ -52,6 +56,10 @@ enum FeedbackMode {
 bool vibActive = false;
 unsigned long vibStart = 0;
 unsigned int vibDuration = 0;
+
+bool soundActive = false;
+unsigned long soundStart = 0;
+unsigned int soundDuration = 0;
 
 FeedbackMode feedbackMode = SOUND_ONLY;
 bool vibrationEnabled = true;
@@ -142,6 +150,7 @@ void errorTone();
 void scanTone();
 void triggerScanNotice();
 void updateFirmwareFromGitHub(const String& binUrl);
+void applyBrightness(int percent);
 byte charToBraille(char c);
 
 // ---------- Special & mapping functions ----------
@@ -225,11 +234,13 @@ byte charToBraille(char c) {
   return 0;
 }
 
-String brailleToChar(byte bits) {
+String brailleToChar(byte bits, bool commitState = true) {
   byte pattern = bits;
   String out = "";
 
+  // Dot 6 (Capitalization Indicator)
   if (pattern == 32) {
+    if (!commitState) return "^"; 
     if (dot6PressedOnce) {
       capsLock = true;
       nextCapital = false;
@@ -243,9 +254,11 @@ String brailleToChar(byte bits) {
       return "";
     }
   }
-  if (pattern != 32) dot6PressedOnce = false;
+  if (commitState && pattern != 32) dot6PressedOnce = false;
 
+  // Dot 3-4-5-6 (Number Indicator)
   if (pattern == 60) {
+    if (!commitState) return "#";
     if (numPressedOnce) {
       numberLock = true;
       nextNumber = false;
@@ -260,9 +273,11 @@ String brailleToChar(byte bits) {
       return "";
     }
   }
-  if (pattern != 60) numPressedOnce = false;
+  if (commitState && pattern != 60) numPressedOnce = false;
 
+  // Special Indicator
   if (pattern == 56) {
+    if (!commitState) return "$";
     if (specialPressedOnce) {
       specialLock = true;
       nextSpecial = false;
@@ -277,9 +292,11 @@ String brailleToChar(byte bits) {
       return "";
     }
   }
-  if (pattern != 56) specialPressedOnce = false;
+  if (commitState && pattern != 56) specialPressedOnce = false;
 
+  // Text Indicator
   if (pattern == 48) {
+    if (!commitState) return ">"; // Pure UI preview only
     if (textPressedOnce) {
       textLock = true;
       nextText = false;
@@ -294,33 +311,24 @@ String brailleToChar(byte bits) {
       return "";
     }
   }
-  if (pattern != 48) textPressedOnce = false;
+  if (commitState && pattern != 48) textPressedOnce = false;
 
-  if (nextNumber || numberLock) {
-    currentMode = NUMBER;
-    nextNumber = false;
-    clearTempIndicator();
+  Mode evalMode = currentMode;
+  if (evalMode == AUTO && pattern != 0) {
+    if (brailleToText(pattern) != "~") evalMode = TEXT;
+    else if (specialFromBraille(pattern) != "0") evalMode = SPECIAL;
+    else if (brailleToNumber(pattern) != '?') evalMode = NUMBER;
   }
 
-  if (nextSpecial || specialLock) {
-    currentMode = SPECIAL;
-    nextSpecial = false;
-    clearTempIndicator();
+  if (commitState) {
+    if (nextNumber || numberLock) { currentMode = NUMBER; nextNumber = false; clearTempIndicator(); }
+    if (nextSpecial || specialLock) { currentMode = SPECIAL; nextSpecial = false; clearTempIndicator(); }
+    if (nextText || textLock) { currentMode = TEXT; nextText = false; clearTempIndicator(); }
   }
 
-  if (nextText || textLock) {
-    currentMode = TEXT;
-    nextText = false;
-    clearTempIndicator();
-  }
+  Mode activeMode = commitState ? currentMode : evalMode;
 
-  if (currentMode == AUTO && pattern != 0) {
-    if (brailleToText(pattern) != "~") currentMode = TEXT;
-    else if (specialFromBraille(pattern) != "0") currentMode = SPECIAL;
-    else if (brailleToNumber(pattern) != '?') currentMode = NUMBER;
-  }
-
-  if (currentMode == TEXT) {
+  if (activeMode == TEXT) {
       out = brailleToText(pattern);
       if (out == "~") {
           String s = specialFromBraille(pattern);
@@ -331,11 +339,11 @@ String brailleToChar(byte bits) {
               else out = "?";
           }
       }
-  } else if (currentMode == SPECIAL) {
+  } else if (activeMode == SPECIAL) {
       String s = specialFromBraille(pattern);
       if (s != "0") out = String(s);
       else out = brailleToText(pattern);
-  } else if (currentMode == NUMBER) {
+  } else if (activeMode == NUMBER) {
       char n = brailleToNumber(pattern);
       if (n != '?') out = String(n);
       else {
@@ -347,11 +355,13 @@ String brailleToChar(byte bits) {
 
   if ((nextCapital || capsLock) && out.length() > 0) {
     out.toUpperCase();
-    nextCapital = false;
-    clearTempIndicator();
+    if (commitState) {
+      nextCapital = false;
+      clearTempIndicator();
+    }
   }
 
-  if ((nextCapital || capsLock) && pattern == 4) {
+  if (commitState && (nextCapital || capsLock) && pattern == 4) {
     capsLock = false;
     nextCapital = false;
     clearTempIndicator();
@@ -479,11 +489,8 @@ void updateLCDMode() {
 }
 
 void setupLittleFS() {
-    // Attempt normal mount with auto-format enabled
     if (!LittleFS.begin(true)) {
         Serial.println("LittleFS Mount Failed! Attempting force format...");
-        
-        // Force format if corrupt directory pairs exist
         if (LittleFS.format()) {
             Serial.println("LittleFS formatted successfully.");
             if (LittleFS.begin(true)) {
@@ -519,7 +526,7 @@ void saveLineToEEPROM() {
             if (j <= i) lcd.print("#");
             else lcd.print(" ");
         }
-        delay(speed);
+        smartDelay(speed);
     }
     insertSpaceAtCursor(); 
     scrollWindow();
@@ -531,7 +538,7 @@ void loadLineFromEEPROM() {
     if (!LittleFS.exists("/buffer.txt")) {
         lcd.setCursor(0, 0);
         lcd.print("No Save File!   ");
-        delay(1000);
+        smartDelay(1000);
         updateLCDMode();
         return;
     }
@@ -548,7 +555,7 @@ void loadLineFromEEPROM() {
     lcd.setCursor(0, 0);
     lcd.print("Loaded from MEM  ");
     loadTone();
-    delay(200);
+    smartDelay(200);
 
     int barWidth = 16;
     int speed = 10;
@@ -558,7 +565,7 @@ void loadLineFromEEPROM() {
             if (j <= i) lcd.print("#");
             else lcd.print(" ");
         }
-        delay(speed);
+        smartDelay(speed);
     }
 
     for (int i = 0; i < loaded.length(); i++) {
@@ -742,6 +749,14 @@ void handleSpaceKeyDirect() {
     }
 }
 
+void applyBrightness(int percent) {
+  lcdBrightness = constrain(percent, 0, 100);
+  int duty = map(lcdBrightness, 0, 100, 0, 255);
+  ledcWrite(1, duty);
+  if (lcdBrightness == 0) lcd.noBacklight();
+  else lcd.backlight();
+}
+
 void startUP() {
   lcd.clear();
   lcd.setCursor(0,0);
@@ -756,7 +771,7 @@ void startUP() {
           if (j <= i) lcd.print("#");
           else lcd.print(" ");
       }
-      delay(speed);
+      smartDelay(speed);
   }
 
   updateLCDMode();
@@ -828,6 +843,79 @@ void handleApiSetText() {
   handleApiState();
 }
 
+void handleApiSettings() {
+  prefs.begin("settings", false);
+  bool volumeUpdated = false;
+  bool modeChanged = false;
+
+  if (server.hasArg("brightness")) {
+    lcdBrightness = server.arg("brightness").toInt();
+    lcdBrightness = constrain(lcdBrightness, 0, 100);
+    applyBrightness(lcdBrightness);
+    prefs.putInt("bright", lcdBrightness);
+  }
+
+  if (server.hasArg("volume")) {
+    int newVol = server.arg("volume").toInt();
+    newVol = constrain(newVol, 0, 100);
+    FeedbackMode oldMode = feedbackMode;
+
+    if (newVol > 0) {
+      soundVolume = newVol;
+      feedbackMode = SOUND_ONLY; // Unmute
+    } else {
+      feedbackMode = VIBRATE_ONLY; // Mute
+    }
+
+    if (oldMode != feedbackMode) {
+      modeChanged = true;
+      prefs.putUInt("fbmode", feedbackMode);
+    }
+
+    prefs.putInt("vol", soundVolume);
+    volumeUpdated = true;
+  }
+
+  prefs.end();
+
+  // If mute mode toggled via website, flash the screen message
+  if (modeChanged) {
+    showFeedbackMode();
+  } 
+  // Otherwise, if volume just changed while sound is active, play preview chime
+  else if (volumeUpdated && feedbackMode == SOUND_ONLY && soundVolume > 0) {
+    sound(2200, 70);
+    smartDelay(90);
+    sound(2800, 100);
+  }
+
+  handleApiState();
+}
+
+void handleApiPower() {
+  if (server.hasArg("state")) {
+    String state = server.arg("state");
+    if (state == "off") {
+      applyBrightness(0);
+      lcd.noDisplay();
+      lcd.noBacklight();
+    } else if (state == "on") {
+      lcd.display();
+      lcd.backlight();
+      applyBrightness(lcdBrightness > 0 ? lcdBrightness : 100);
+      updateLCDMode();
+      redrawLCDLine();
+    }
+  }
+  handleApiState();
+}
+
+void handleApiReboot() {
+  server.send(200, "application/json", "{\"status\":\"ESP32 is rebooting...\"}");
+  smartDelay(1000);
+  ESP.restart();
+}
+
 void getSystemStateJson(String &jsonOut) {
   String line0 = "";
   switch(currentMode) {
@@ -847,7 +935,8 @@ void getSystemStateJson(String &jsonOut) {
   }
   while (line1.length() < 16) line1 += " ";
 
-  String preview = brailleToChar(brailleBits);
+  // Pass false to generate preview string without mutating state variables
+  String preview = brailleToChar(brailleBits, false);
   if (preview == "") preview = " ";
 
   String safeFullText = fullBuffer;
@@ -869,6 +958,8 @@ void getSystemStateJson(String &jsonOut) {
     wifiStatusMsg = "Connected: " + WiFi.localIP().toString();
   }
 
+  int reportedVolume = (feedbackMode == VIBRATE_ONLY) ? 0 : soundVolume;
+
   jsonOut = "{";
   jsonOut += "\"bits\":" + String(brailleBits) + ",";
   jsonOut += "\"mode\":" + String((int)currentMode) + ",";
@@ -878,7 +969,10 @@ void getSystemStateJson(String &jsonOut) {
   jsonOut += "\"lcd1\":\"" + line1 + "\",";
   jsonOut += "\"fullText\":\"" + safeFullText + "\",";
   jsonOut += "\"brailleArray\":" + jsonBrailleArray + ",";
-  jsonOut += "\"wifiStatus\":\"" + wifiStatusMsg + "\"";
+  jsonOut += "\"wifiStatus\":\"" + wifiStatusMsg + "\",";
+  jsonOut += "\"brightness\":" + String(lcdBrightness) + ",";
+  jsonOut += "\"volume\":" + String(reportedVolume) + ",";
+  jsonOut += "\"feedbackMode\":" + String((int)feedbackMode);
   jsonOut += "}";
 }
 
@@ -921,7 +1015,7 @@ void updateFirmwareFromGitHub(const String& binUrl) {
     lcd.setCursor(0, 1);
     lcd.print(" internet first ");
     errorTone();
-    delay(2000);
+    smartDelay(2000);
     updateLCDMode();
     redrawLCDLine();
     return;
@@ -935,7 +1029,7 @@ void updateFirmwareFromGitHub(const String& binUrl) {
   scanTone();
 
   WiFiClientSecure client;
-  client.setInsecure(); // Bypass SSL verification for GitHub and AWS S3 redirect hosts
+  client.setInsecure();
 
   String manifestUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/manifest.json";
   HTTPClient http;
@@ -962,7 +1056,6 @@ void updateFirmwareFromGitHub(const String& binUrl) {
     latestVersion = latestVersion.substring(1);
   }
 
-  // 2. Compare latest release version against current FIRMWARE_VERSION
   if (latestVersion.length() > 0 && latestVersion == FIRMWARE_VERSION) {
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -970,14 +1063,13 @@ void updateFirmwareFromGitHub(const String& binUrl) {
     lcd.setCursor(0, 1);
     lcd.print(" Date! (v" FIRMWARE_VERSION ") ");
     sound(2000, 100);
-    delay(2500);
+    smartDelay(2500);
     scrollWindow();
     redrawLCDLine();
     updateLCDMode();
     return;
   }
 
-  // 3. Newer version detected or manifest bypass, proceed to flash firmware payload
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print(" Downloading... ");
@@ -1006,14 +1098,14 @@ void updateFirmwareFromGitHub(const String& binUrl) {
       lcd.print(httpUpdate.getLastError());
       lcd.print(" ");
       errorTone();
-      delay(3000);
+      smartDelay(3000);
       break;
 
     case HTTP_UPDATE_NO_UPDATES:
       lcd.clear();
       lcd.setCursor(0, 0);
       lcd.print(" No New Version ");
-      delay(2000);
+      smartDelay(2000);
       break;
 
     case HTTP_UPDATE_OK:
@@ -1023,7 +1115,7 @@ void updateFirmwareFromGitHub(const String& binUrl) {
       lcd.setCursor(0, 1);
       lcd.print(" Rebooting...   ");
       saveTone();
-      delay(2000);
+      smartDelay(2000);
       ESP.restart();
       break;
   }
@@ -1035,8 +1127,14 @@ void updateFirmwareFromGitHub(const String& binUrl) {
 // ---------- ESP32 Setup & Loop ----------
 void setup() {
   Serial.begin(9600);
+  
+  // LEDC Channel 0 for Buzzer PWM Sound / Volume
   ledcSetup(0, 2000, 8);
   ledcAttachPin(buzzerPin, 0);
+
+  // LEDC Channel 1 for LCD PWM Brightness
+  ledcSetup(1, 5000, 8);
+  ledcAttachPin(LCD_BACKLIGHT_PIN, 1);
 
   pinMode(vibroPin, OUTPUT);
   digitalWrite(vibroPin, LOW);
@@ -1051,7 +1149,11 @@ void setup() {
 
   prefs.begin("settings", false);
   feedbackMode = (FeedbackMode)prefs.getUInt("fbmode", 0);
+  lcdBrightness = prefs.getInt("bright", 100);
+  soundVolume = prefs.getInt("vol", 100);
   prefs.end();
+
+  applyBrightness(lcdBrightness);
 
   // Dual AP + STA Wi-Fi Mode
   WiFi.mode(WIFI_AP_STA);
@@ -1077,6 +1179,9 @@ void setup() {
   server.on("/api/scan", handleApiScan);
   server.on("/api/connect", handleApiConnect);
   server.on("/api/settext", handleApiSetText);
+  server.on("/api/settings", handleApiSettings);
+  server.on("/api/power", handleApiPower);
+  server.on("/api/reboot", handleApiReboot);
   
   // Register GitHub Remote OTA Route
   server.on("/api/ota_update", HTTP_GET, []() {
@@ -1101,7 +1206,7 @@ void setup() {
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
     server.send(200, "text/plain", (Update.hasError()) ? "Update Failed!" : "Update Success! Rebooting...");
-    delay(1000);
+    smartDelay(1000);
     ESP.restart();
   }, []() {
     HTTPUpload& upload = server.upload();
@@ -1126,7 +1231,6 @@ void setup() {
   server.onNotFound(handleRoot);
   server.begin();
 
-  // Initialize mDNS Responder (http://braillify.local)
   if (MDNS.begin("braillify")) {
     MDNS.addService("http", "tcp", 80);
     Serial.println("mDNS responder started: http://braillify.local");
@@ -1149,46 +1253,73 @@ void vibrate(int durationMs, int strength) {
   vibActive = true;
 }
 
+void smartDelay(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    if (soundActive && millis() - soundStart >= soundDuration) {
+      ledcWrite(0, 0);
+      soundActive = false;
+    }
+    if (vibActive && millis() - vibStart >= vibDuration) {
+      digitalWrite(vibroPin, LOW);
+      vibActive = false;
+    }
+    yield();
+  }
+}
+
 void sound(int freq, int dur) {
   unsigned long now = millis();
   if (now - lastBeep >= debounceMillis) {
-    if (feedbackMode != VIBRATE_ONLY) tone(buzzerPin, freq, dur);
+    if (feedbackMode != VIBRATE_ONLY && soundVolume > 0) {
+      // Logarithmic perceived loudness scaling for piezo buzzers
+      float normalized = soundVolume / 100.0f;
+      int duty = (int)(128.0f * pow(normalized, 2.8f)); // Power of 2.8 curve
+      
+      if (duty < 1) duty = 1;
+
+      ledcWriteTone(0, freq);
+      ledcWrite(0, duty);
+      soundStart = now;
+      soundDuration = dur;
+      soundActive = true;
+    }
     if (feedbackMode != SOUND_ONLY) vibrate(200, 230);
     lastBeep = now;
   }
 }
 
 void startupTone() {
-  sound(1500, 120); delay(150);
-  sound(2000, 120); delay(150);
-  sound(2500, 160); delay(200);
+  sound(1500, 120); smartDelay(150);
+  sound(2000, 120); smartDelay(150);
+  sound(2500, 160); smartDelay(200);
 }
 void saveTone() {
-  sound(2000, 60); delay(200);
-  sound(2400, 60); delay(200);
-  sound(2800, 80); delay(300);
+  sound(2000, 60); smartDelay(200);
+  sound(2400, 60); smartDelay(200);
+  sound(2800, 80); smartDelay(300);
 }
 void loadTone() {
-  sound(2800, 60); delay(200);
-  sound(2400, 60); delay(200);
-  sound(2000, 80); delay(300);
+  sound(2800, 60); smartDelay(200);
+  sound(2400, 60); smartDelay(200);
+  sound(2000, 80); smartDelay(300);
 }
 void enterTone() {
-  sound(1600, 60); delay(100);
-  sound(1600, 60); delay(100);
+  sound(1600, 60); smartDelay(100);
+  sound(1600, 60); smartDelay(100);
 }
 void modeTone() {
-  sound(2000, 120); delay(150);
-  sound(2500, 160); delay(300);
+  sound(2000, 120); smartDelay(150);
+  sound(2500, 160); smartDelay(300);
 }
 void errorTone() {
-  sound(400, 150); delay(150);
-  sound(300, 250); delay(250);
+  sound(400, 150); smartDelay(150);
+  sound(300, 250); smartDelay(250);
 }
 void scanTone() {
-  sound(2000, 80); delay(100);
-  sound(2600, 80); delay(100);
-  sound(3200, 120); delay(150);
+  sound(2000, 80); smartDelay(100);
+  sound(2600, 80); smartDelay(100);
+  sound(3200, 120); smartDelay(150);
 }
 
 void triggerScanNotice() {
@@ -1208,7 +1339,7 @@ void triggerScanNotice() {
         if (j <= i) lcd.print("!");
         else lcd.print(" ");
       }
-      delay(speed);
+      smartDelay(speed);
     }
   } else {
     lcd.setCursor(0, 0);
@@ -1216,7 +1347,7 @@ void triggerScanNotice() {
     lcd.setCursor(0, 1);
     lcd.print("external device!");
     scanTone();
-    delay(300);
+    smartDelay(300);
 
     int barWidth = 16;
     int speed = 30;
@@ -1231,10 +1362,10 @@ void triggerScanNotice() {
         if (j <= i) lcd.print("#");
         else lcd.print(" ");
       }
-      delay(speed);
+      smartDelay(speed);
     }
   }
-  delay(400);
+  smartDelay(400);
   scrollWindow();
   redrawLCDLine();
   updateLCDMode();
@@ -1263,6 +1394,11 @@ void loop() {
 
   char key = getHeldKey();  
   unsigned long now = millis();
+
+  if (soundActive && millis() - soundStart >= soundDuration) {
+    ledcWrite(0, 0);
+    soundActive = false;
+  }
 
   if (vibActive && millis() - vibStart >= vibDuration) {
     digitalWrite(vibroPin, LOW);
@@ -1324,7 +1460,7 @@ void showFeedbackMode() {
   else if (feedbackMode == SOUND_ONLY) {
     lcd.print("===  SOUND   ===");
   }
-  delay(2000);
+  smartDelay(1500);
   updateLCDMode();
   redrawLCDLine();
 }

@@ -68,6 +68,11 @@ const char index_html[] PROGMEM = R"rawliteral(
     .wifi-input { width: 100%; padding: 8px 10px; border: 2px solid var(--border); border-radius: 6px; font-size: 0.85rem; font-weight: 600; }
     .wifi-status-info { font-size: 0.75rem; font-weight: bold; color: var(--orange-dark); margin-bottom: 10px; text-align: center; }
 
+    /* Settings Modal Controls */
+    .setting-group { margin-bottom: 16px; }
+    .setting-header { display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 800; margin-bottom: 6px; color: var(--text); }
+    .setting-slider { width: 100%; accent-color: var(--orange-dark); cursor: pointer; height: 8px; }
+
     /* Camera OCR Modal Elements */
     .camera-box { width: 100%; height: 210px; background: #000; border: 2px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; position: relative; display: flex; justify-content: center; align-items: center; }
     .camera-video { width: 100%; height: 100%; object-fit: cover; }
@@ -119,7 +124,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     .dot-key-sub { font-size: 0.6rem; color: #57606a; font-weight: 700; }
     .footer { text-align: center; font-size: .7rem; font-weight: bold; color: #57606a; margin-top: 14px; border-top: 2px solid var(--border); padding-top: 8px; }
 
-    /* OTA Section */
+    /* OTA / Settings Section */
     .ota-section { margin-top: 12px; text-align: center; }
     .btn-update { width: 100%; background: #e8f5e9; border: 2px solid var(--border); color: #2e7d32; font-size: 0.85rem; font-weight: 800; padding: 10px; border-radius: 8px; cursor: pointer; box-shadow: 2px 2px 0px var(--border); transition: all .05s; display: flex; align-items: center; justify-content: center; gap: 6px; }
     .btn-update:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
@@ -243,12 +248,63 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class="footer">ESP32 BRAILLIFY // AP: 192.168.4.1 // Local: http://braillify.local</div>
   
   <div class="ota-section">
-    <button id="ota-btn" onclick="triggerOtaUpdate()" class="btn-update">
-      ⚡ Check for Update
+    <button onclick="openSettingsModal()" class="btn-update" style="background: var(--blue-light); color: var(--blue);">
+      ⚙️ Device Settings
     </button>
-    <div id="ota-status"></div>
   </div>
 
+</div>
+
+<!-- Device Settings Modal -->
+<div class="modal-overlay" id="settings-modal" onclick="handleModalBackdropClick(event)">
+  <div class="modal-content">
+    <div class="modal-header">
+      <div class="modal-title">⚙️ Device Settings</div>
+      <button class="modal-close-btn" onclick="closeSettingsModal()">&times;</button>
+    </div>
+
+    <!-- Brightness Slider -->
+    <div class="setting-group">
+      <div class="setting-header">
+        <span>☀️ LCD Backlight Brightness</span>
+        <span id="brightness-val-label">100%</span>
+      </div>
+      <input type="range" id="brightness-slider" min="0" max="100" value="100" class="setting-slider" onchange="setBrightness(this.value)" oninput="document.getElementById('brightness-val-label').innerText=this.value+'%'">
+    </div>
+
+    <!-- Volume Slider -->
+    <div class="setting-group" style="margin-bottom: 20px;">
+      <div class="setting-header">
+        <span>🔊 Buzzer Volume</span>
+        <span id="volume-val-label">100%</span>
+      </div>
+      <input type="range" id="volume-slider" min="0" max="100" value="100" class="setting-slider" onchange="setVolume(this.value)" oninput="document.getElementById('volume-val-label').innerText = (this.value > 0 ? this.value + '%' : 'MUTED (0%)')">
+    </div>
+
+    <!-- Firmware OTA Section -->
+    <div class="ota-section" style="border-top: 2px dashed var(--border); padding-top: 14px;">
+      <div class="section-title" style="margin-bottom: 8px;">Firmware Update</div>
+      <button id="ota-btn" onclick="triggerOtaUpdate()" class="btn-update">
+        ⚡ Check & Update Firmware (GitHub OTA)
+      </button>
+      <div id="ota-status"></div>
+    </div>
+
+    <div class="setting-group" style="border-top: 2px dashed var(--border); padding-top: 14px; margin-top: 14px;">
+      <div style="display: flex; gap: 8px;">
+        <button onclick="setPowerState('off')" class="btn-update" style="flex: 1; background: #ffebee; color: #c62828;">
+          🌙 Sleep
+        </button>
+        <button onclick="setPowerState('on')" class="btn-update" style="flex: 1; background: #e8f5e9; color: #2e7d32;">
+          ☀️ Turn On
+        </button>
+        <button onclick="rebootEsp32()" class="btn-update" style="flex: 1; background: #fff3e0; color: #e65100;">
+          🔄 Reboot
+        </button>
+      </div>
+    </div>
+
+  </div>
 </div>
 
 <!-- Flashcard Practice Modal -->
@@ -349,6 +405,8 @@ let fcScore = 0;
 let fcStreak = 0;
 let fcShowHint = false;
 let lastEvaluatedTextLen = 0;
+let currentBrightness = 100;
+let currentVolume = 100;
 
 function openFlashcardModal(){ document.getElementById('flashcard-modal').classList.add('active'); }
 function closeFlashcardModal(){ document.getElementById('flashcard-modal').classList.remove('active'); }
@@ -359,6 +417,33 @@ function openWifiModal(){
 }
 function closeWifiModal(){ document.getElementById('wifi-modal').classList.remove('active'); }
 
+let currentFeedbackMode = 0; // 0 = SOUND_ONLY, 1 = VIBRATE_ONLY
+
+function openSettingsModal(){ 
+  document.getElementById('brightness-slider').value = currentBrightness;
+  document.getElementById('brightness-val-label').innerText = currentBrightness + '%';
+  
+  const activeVol = (currentFeedbackMode === 1) ? 0 : currentVolume;
+  document.getElementById('volume-slider').value = activeVol;
+  document.getElementById('volume-val-label').innerText = (activeVol > 0) ? activeVol + '%' : 'MUTED (0%)';
+  
+  document.getElementById('settings-modal').classList.add('active'); 
+}
+function closeSettingsModal(){ document.getElementById('settings-modal').classList.remove('active'); }
+
+function setBrightness(val) {
+  currentBrightness = parseInt(val);
+  fetch('/api/settings?brightness=' + val)
+    .then(r => r.json())
+    .then(d => updateState(d));
+}
+
+function setVolume(val) {
+  currentVolume = parseInt(val);
+  fetch('/api/settings?volume=' + val)
+    .then(r => r.json())
+    .then(d => updateState(d));
+}
 let cameraStream = null;
 function openCameraModal(){
   document.getElementById('camera-modal').classList.add('active');
@@ -404,6 +489,21 @@ function openNativeCamera() {
 
 function openNativeGallery() {
   document.getElementById('gallery-file-input').click();
+}
+
+function setPowerState(state) {
+  fetch('/api/power?state=' + state)
+    .then(r => r.json())
+    .then(d => updateState(d));
+}
+
+function rebootEsp32() {
+  if (confirm("Reboot the ESP32 device now?")) {
+    fetch('/api/reboot')
+      .then(r => r.json())
+      .then(d => alert(d.status || "Rebooting ESP32..."))
+      .catch(() => alert("Reboot command sent."));
+  }
 }
 
 // High-Accuracy Cloud Vision OCR (OCR.Space Engine)
@@ -498,6 +598,7 @@ function handleModalBackdropClick(e){
   if(e.target.id === 'flashcard-modal') closeFlashcardModal();
   if(e.target.id === 'wifi-modal') closeWifiModal();
   if(e.target.id === 'camera-modal') closeCameraModal();
+  if(e.target.id === 'settings-modal') closeSettingsModal();
 }
 
 function scanWifiNetworks(){
@@ -589,7 +690,6 @@ async function processOnlineWordBuffer(fullText, cursor) {
   if (correctedWord && correctedWord !== targetWord) {
     const newText = fullText.substring(0, wordStart) + correctedWord + fullText.substring(wordEnd);
     
-    // Adjust cursor by character length difference
     const lengthDiff = correctedWord.length - targetWord.length;
     const newCursor = cursor + lengthDiff;
 
@@ -763,7 +863,27 @@ function updateState(d){
   renderFullText(d.fullText || "", d.cursor || 0, d.brailleArray || []);
   if(d.wifiStatus) document.getElementById('wifi-status-label').innerText = d.wifiStatus;
 
-  // Trigger online correction only when a space is inserted and not currently updating
+  if (d.feedbackMode !== undefined) {
+    currentFeedbackMode = d.feedbackMode;
+  }
+
+  if (d.brightness !== undefined && document.activeElement !== document.getElementById('brightness-slider')) {
+    currentBrightness = d.brightness;
+    document.getElementById('brightness-slider').value = d.brightness;
+    document.getElementById('brightness-val-label').innerText = d.brightness + '%';
+  }
+
+  if (d.volume !== undefined) {
+    if (currentFeedbackMode === 0 && d.volume > 0) {
+      currentVolume = d.volume;
+    }
+    if (document.activeElement !== document.getElementById('volume-slider')) {
+      const displayVol = (currentFeedbackMode === 1) ? 0 : d.volume;
+      document.getElementById('volume-slider').value = displayVol;
+      document.getElementById('volume-val-label').innerText = (displayVol > 0) ? displayVol + '%' : 'MUTED (0%)';
+    }
+  }
+
   if (spaceWasAdded && !isAutoCorrecting) {
     processOnlineWordBuffer(d.fullText, d.cursor);
   }
@@ -789,7 +909,7 @@ function resetOtaBtn(msg) {
   const statusEl = document.getElementById('ota-status');
   if (btn) {
     btn.disabled = false;
-    btn.innerText = '⚡ Check Update';
+    btn.innerText = '⚡ Check & Update Firmware (GitHub OTA)';
   }
   if (statusEl && msg) {
     statusEl.innerText = msg;
@@ -816,7 +936,6 @@ async function triggerOtaUpdate() {
     const data = await res.json();
     statusEl.innerText = data.status || 'OTA update initiated on ESP32!';
 
-    // Automatic 15-second fallback reset if the ESP32 download fails or doesn't restart
     setTimeout(() => {
       if (isUpdatingOta) {
         resetOtaBtn('Update process finished. If LCD showed an error, check Wi-Fi / link and try again.');
