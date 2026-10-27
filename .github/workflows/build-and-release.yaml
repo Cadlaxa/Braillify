@@ -1,41 +1,26 @@
-name: Braillify Firmware Build and Release
+name: Cross-Platform Build and Release
 
 on:
-  # push:
-  #   branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
   # ==========================================
-  # JOB 1: Compile the firmware for ESP32
+  # JOB 1: Package pre-compiled binary
   # ==========================================
   build:
-    name: Build Braillify Firmware
+    name: Package Pre-Compiled Binary
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
-
-    - name: Install PlatformIO Core
-      run: |
-        python -m pip install --upgrade pip
-        pip install --upgrade platformio
-
-    - name: Build ESP32 Firmware
-      run: pio run
-
     - name: Prepare Firmware Artifacts
       run: |
         mkdir -p ./publish_output
         VERSION="1.0.${{ github.run_number }}"
-        cp .pio/build/*/firmware.bin ./publish_output/firmware.bin
-        cp .pio/build/*/firmware.bin ./publish_output/braillify-v${VERSION}.bin
+        cp braillify.ino.bin ./publish_output/firmware.bin
+        cp braillify.ino.bin ./publish_output/braillify-v${VERSION}.bin
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
