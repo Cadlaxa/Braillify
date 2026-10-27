@@ -9,6 +9,9 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include "web_pages.h"
+#include <Update.h>
+#include <WiFiClientSecure.h>
+#include <HTTPUpdate.h>
 
 Preferences prefs;
 
@@ -136,6 +139,7 @@ void modeTone();
 void errorTone();
 void scanTone();
 void triggerScanNotice();
+void updateFirmwareFromGitHub(const String& binUrl);
 byte charToBraille(char c);
 
 // ---------- Special & mapping functions ----------
@@ -465,10 +469,10 @@ void cycleMode() {
 void updateLCDMode() {
   lcd.setCursor(0,0);
   switch(currentMode) {
-    case AUTO:    lcd.print("Mode: AUTO     "); break;
-    case TEXT:    lcd.print("Mode: Text     "); break;
-    case NUMBER:  lcd.print("Mode: Number   "); break;
-    case SPECIAL: lcd.print("Mode: Special  "); break;
+    case AUTO:    lcd.print("Mode: AUTO      "); break;
+    case TEXT:    lcd.print("Mode: Text      "); break;
+    case NUMBER:  lcd.print("Mode: Number    "); break;
+    case SPECIAL: lcd.print("Mode: Special   "); break;
   }
 }
 
@@ -508,13 +512,16 @@ void saveLineToEEPROM() {
     int barWidth = 16;
     int speed = 10;
     for (int i = 0; i <= barWidth; i++) {
-        lcd.setCursor(0, 0);
+        lcd.setCursor(0, 1);
         for (int j = 0; j < barWidth; j++) {
             if (j <= i) lcd.print("#");
             else lcd.print(" ");
         }
         delay(speed);
     }
+    insertSpaceAtCursor(); 
+    scrollWindow();
+    redrawLCDLine();
     updateLCDMode();
 }
 
@@ -536,7 +543,7 @@ void loadLineFromEEPROM() {
 
     while (loaded.endsWith(" ")) loaded.remove(loaded.length() - 1);
     if (loaded.length() == 0) return;
-
+    lcd.setCursor(0, 0);
     lcd.print("Loaded from MEM  ");
     loadTone();
     delay(200);
@@ -904,6 +911,75 @@ void handleApiSetCursor() {
   handleApiState();
 }
 
+void updateFirmwareFromGitHub(const String& binUrl) {
+  if (WiFi.status() != WL_CONNECTED) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(" Connect to     ");
+    lcd.setCursor(0, 1);
+    lcd.print(" internet first ");
+    errorTone();
+    delay(2000);
+    updateLCDMode();
+    redrawLCDLine();
+    return;
+  }
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(" Downloading... ");
+  scanTone();
+
+  WiFiClientSecure client;
+  client.setInsecure(); // Skip SSL certificate validation
+
+  httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+  httpUpdate.onProgress([](int current, int total) {
+    int percentage = (current * 100) / total;
+    lcd.setCursor(0, 1);
+    lcd.print(" Progress: ");
+    lcd.print(percentage);
+    lcd.print("%   ");
+  });
+
+  t_httpUpdate_return ret = httpUpdate.update(client, binUrl);
+
+  switch (ret) {
+    case HTTP_UPDATE_FAILED:
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(" Update Failed! ");
+      lcd.setCursor(0, 1);
+      lcd.print(" Error Code ");
+      lcd.print(httpUpdate.getLastError());
+      errorTone();
+      delay(3000);
+      break;
+
+    case HTTP_UPDATE_NO_UPDATES:
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(" No New Version ");
+      delay(2000);
+      break;
+
+    case HTTP_UPDATE_OK:
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(" Update Success!");
+      lcd.setCursor(0, 1);
+      lcd.print(" Rebooting...   ");
+      saveTone();
+      delay(2000);
+      ESP.restart();
+      break;
+  }
+  scrollWindow();
+  redrawLCDLine();
+  updateLCDMode();
+}
+
 // ---------- ESP32 Setup & Loop ----------
 void setup() {
   Serial.begin(9600);
@@ -949,6 +1025,52 @@ void setup() {
   server.on("/api/scan", handleApiScan);
   server.on("/api/connect", handleApiConnect);
   server.on("/api/settext", handleApiSetText);
+  
+  // Register GitHub Remote OTA Route
+  server.on("/api/ota_update", HTTP_GET, []() {
+    String defaultUrl = "https://raw.githubusercontent.com/Cadlaxa/Braillify/main/firmware.bin";
+    String targetUrl = server.hasArg("url") ? server.arg("url") : defaultUrl;
+    
+    server.send(200, "application/json", "{\"status\":\"OTA Update Started! Watch ESP32 LCD display.\"}");
+    updateFirmwareFromGitHub(targetUrl);
+  });
+
+  // Manual Local File Upload OTA
+  server.on("/update", HTTP_GET, []() {
+    String html = "<html><body>";
+    html += "<form method='POST' action='/update' enctype='multipart/form-data'>";
+    html += "<h2>Braillify OTA Firmware Update</h2>";
+    html += "<input type='file' name='update' accept='.bin'>";
+    html += "<input type='submit' value='Upload & Flash'>";
+    html += "</form></body></html>";
+    server.send(200, "text/html", html);
+  });
+
+  server.on("/update", HTTP_POST, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", (Update.hasError()) ? "Update Failed!" : "Update Success! Rebooting...");
+    delay(1000);
+    ESP.restart();
+  }, []() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      Serial.printf("Update Firmware: %s\n", upload.filename.c_str());
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_END) {
+      if (Update.end(true)) {
+        Serial.printf("Update Success: %u bytes\n", upload.totalSize);
+      } else {
+        Update.printError(Serial);
+      }
+    }
+  });
+
   server.onNotFound(handleRoot);
   server.begin();
 
@@ -1026,7 +1148,6 @@ void triggerScanNotice() {
     lcd.print(" internet first ");
     errorTone();
 
-    // Error animation: Warning exclamation fill
     int barWidth = 16;
     int speed = 25;
     for (int i = 0; i <= barWidth; i++) {
@@ -1039,15 +1160,20 @@ void triggerScanNotice() {
     }
   } else {
     lcd.setCursor(0, 0);
-    lcd.print(" Scan using     ");
+    lcd.print("   Scan using   ");
     lcd.setCursor(0, 1);
-    lcd.print("external device ");
+    lcd.print("external device!");
     scanTone();
+    delay(300);
 
-    // Scan animation: Smooth progress fill
     int barWidth = 16;
-    int speed = 20;
+    int speed = 30;
     for (int i = 0; i <= barWidth; i++) {
+      lcd.setCursor(0, 0);
+      for (int j = 0; j < barWidth; j++) {
+        if (j <= i) lcd.print("#");
+        else lcd.print(" ");
+      }
       lcd.setCursor(0, 1);
       for (int j = 0; j < barWidth; j++) {
         if (j <= i) lcd.print("#");

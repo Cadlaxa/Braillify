@@ -118,6 +118,13 @@ const char index_html[] PROGMEM = R"rawliteral(
     .dot-key-num { font-size: 1.1rem; font-weight: 900; font-family: 'Courier New', monospace; }
     .dot-key-sub { font-size: 0.6rem; color: #57606a; font-weight: 700; }
     .footer { text-align: center; font-size: .7rem; font-weight: bold; color: #57606a; margin-top: 14px; border-top: 2px solid var(--border); padding-top: 8px; }
+
+    /* OTA Section */
+    .ota-section { margin-top: 12px; text-align: center; }
+    .btn-update { width: 100%; background: #e8f5e9; border: 2px solid var(--border); color: #2e7d32; font-size: 0.85rem; font-weight: 800; padding: 10px; border-radius: 8px; cursor: pointer; box-shadow: 2px 2px 0px var(--border); transition: all .05s; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .btn-update:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
+    .btn-update:disabled { opacity: 0.6; cursor: not-allowed; background: #d0d7de; color: #57606a; }
+    #ota-status { font-size: 0.75rem; font-weight: bold; color: var(--orange-dark); margin-top: 6px; min-height: 1.2em; }
   </style>
 </head>
 <body>
@@ -178,7 +185,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 
   <div class="keypad-grid">
-    <!-- Row 1: Camera SCAN button replaces Bluetooth -->
+    <!-- Row 1: Camera SCAN button -->
     <button class="key-btn cmd" onclick="openCameraModal()" title="Camera OCR / Scan">
       <svg viewBox="0 0 24 24"><path d="M12 15c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm9-9h-3.17L16 4H8L6.17 6H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-9 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5z"/></svg>
       <span class="key-label">SCAN</span>
@@ -234,6 +241,14 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 
   <div class="footer">ESP32 BRAILLIFY // AP: 192.168.4.1 // Local: http://braillify.local</div>
+  
+  <div class="ota-section">
+    <button id="ota-btn" onclick="triggerOtaUpdate()" class="btn-update">
+      ⚡ Check for Update
+    </button>
+    <div id="ota-status"></div>
+  </div>
+
 </div>
 
 <!-- Flashcard Practice Modal -->
@@ -765,10 +780,57 @@ function updateState(d){
   }
 }
 
+// GitHub OTA Firmware Update Trigger Function
+let isUpdatingOta = false;
+
+function resetOtaBtn(msg) {
+  isUpdatingOta = false;
+  const btn = document.getElementById('ota-btn');
+  const statusEl = document.getElementById('ota-status');
+  if (btn) {
+    btn.disabled = false;
+    btn.innerText = '⚡ Check Update';
+  }
+  if (statusEl && msg) {
+    statusEl.innerText = msg;
+  }
+}
+
+async function triggerOtaUpdate() {
+  if (isUpdatingOta) return;
+
+  const btn = document.getElementById('ota-btn');
+  const statusEl = document.getElementById('ota-status');
+
+  if (!confirm('Start firmware update directly from GitHub? The device will restart automatically once flashing completes.')) {
+    return;
+  }
+
+  isUpdatingOta = true;
+  btn.disabled = true;
+  btn.innerText = '⚡ Updating...';
+  statusEl.innerText = 'Triggering OTA process. Watch ESP32 LCD display for download progress...';
+
+  try {
+    const res = await fetch('/api/ota_update');
+    const data = await res.json();
+    statusEl.innerText = data.status || 'OTA update initiated on ESP32!';
+
+    // Automatic 15-second fallback reset if the ESP32 download fails or doesn't restart
+    setTimeout(() => {
+      if (isUpdatingOta) {
+        resetOtaBtn('Update process finished. If LCD showed an error, check Wi-Fi / link and try again.');
+      }
+    }, 15000);
+
+  } catch (err) {
+    resetOtaBtn('❌ Connection lost or failed to initiate OTA update.');
+  }
+}
+
 let isPolling = false;
 
 async function pollState() {
-  // Lock: prevent overlapping requests if one takes longer to respond
   if (isPolling) return;
   isPolling = true;
 
@@ -782,7 +844,6 @@ async function pollState() {
     // Silently handle transient disconnects
   } finally {
     isPolling = false;
-    // Schedule the next poll 500ms AFTER the last one completes
     setTimeout(pollState, 500);
   }
 }
