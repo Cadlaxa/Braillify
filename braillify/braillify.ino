@@ -1,9 +1,8 @@
 #include <Keypad.h>
 #include <LiquidCrystal_I2C.h>
-#include <EEPROM.h>
+#include <LittleFS.h>
 #include <cstring>
 #include <Wire.h>
-#include <BleKeyboard.h>
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -55,7 +54,7 @@ bool lastButtonState = HIGH;
 unsigned long lastBeep = 0;
 const unsigned long debounceMillis = 35;
 
-// EEPROM settings
+// EEPROM / Storage settings
 const int EEPROM_ADDR = 0;
 const int MAX_CHARS = 1024;
 int loadingProgress = 0;
@@ -84,7 +83,7 @@ bool textLock = false;
 bool textPressedOnce = false;
 int indicatorLength = 0;
 
-#define MAX_BUFFER 128
+#define MAX_BUFFER 4096
 byte fullBufferBraille[MAX_BUFFER];
 byte contractionPrefix = 0;
 
@@ -96,10 +95,6 @@ unsigned long nextRepeatTime = 0;
 bool hashPending = false;
 unsigned long hashPressTime = 0;
 const unsigned long hashDebounceTime = 250;
-
-BleKeyboard bleKeyboard("Braillify", "Group ano", 100);
-bool bluetoothEnabled = false;
-bool wasConnected = false;
 
 enum Mode { AUTO, TEXT, NUMBER, SPECIAL };
 Mode currentMode = AUTO;
@@ -131,17 +126,16 @@ void updateLCDMode();
 void saveLineToEEPROM();
 void loadLineFromEEPROM();
 void handleSpaceKeyDirect();
-void sendChangesToBLE(const String& oldStr, const String& newStr);
 void sound(int freq, int dur);
 void vibrate(int durationMs, int strength);
 void startupTone();
 void saveTone();
 void loadTone();
-void btTone();
-void btdTone();
 void enterTone();
 void modeTone();
-void toggleBluetooth();
+void errorTone();
+void scanTone();
+void triggerScanNotice();
 byte charToBraille(char c);
 
 // ---------- Special & mapping functions ----------
@@ -437,16 +431,10 @@ void backspaceAtCursor() {
   if (windowStart > 0 && cursorPos < windowStart) windowStart--;
   scrollWindow();
   redrawLCDLine();
-  if (bluetoothEnabled && bleKeyboard.isConnected()) {
-      bleKeyboard.write(KEY_BACKSPACE);
-  }
 }
 
 void insertSpaceAtCursor() {
   insertAtCursor(' ', 0);
-  if (bluetoothEnabled && bleKeyboard.isConnected()) {
-      bleKeyboard.print(' ');
-  }
 }
 
 void moveCursorLeft() {
@@ -454,9 +442,6 @@ void moveCursorLeft() {
       cursorPos--;
       scrollWindow();
       redrawLCDLine();
-      if (bluetoothEnabled && bleKeyboard.isConnected()) {
-          bleKeyboard.write(KEY_LEFT_ARROW);
-      }
   }
 }
 
@@ -465,9 +450,6 @@ void moveCursorRight() {
       cursorPos++;
       scrollWindow();
       redrawLCDLine();
-      if (bluetoothEnabled && bleKeyboard.isConnected()) {
-          bleKeyboard.write(KEY_RIGHT_ARROW);
-      }
   }
 }
 
@@ -488,55 +470,73 @@ void updateLCDMode() {
     case NUMBER:  lcd.print("Mode: Number   "); break;
     case SPECIAL: lcd.print("Mode: Special  "); break;
   }
-  lcd.setCursor(15, 0);
-  if (bluetoothEnabled) {
-    lcd.write(byte(0));
-  } else {
-    lcd.print(" ");
-  }
+}
+
+void setupLittleFS() {
+    // Attempt normal mount with auto-format enabled
+    if (!LittleFS.begin(true)) {
+        Serial.println("LittleFS Mount Failed! Attempting force format...");
+        
+        // Force format if corrupt directory pairs exist
+        if (LittleFS.format()) {
+            Serial.println("LittleFS formatted successfully.");
+            if (LittleFS.begin(true)) {
+                Serial.println("LittleFS mounted after formatting!");
+                return;
+            }
+        }
+        Serial.println("Error: Failed to initialize LittleFS!");
+    } else {
+        Serial.println("LittleFS mounted successfully.");
+    }
 }
 
 void saveLineToEEPROM() {
-  int len = fullBuffer.length();
-  for (int i = 0; i < MAX_CHARS; i++) {
-    if (i < len)
-        EEPROM.write(EEPROM_ADDR + i, fullBuffer[i]);
-    else
-        EEPROM.write(EEPROM_ADDR + i, 0);
-  }
-  EEPROM.write(EEPROM_ADDR + MAX_CHARS, len);
-  EEPROM.commit();
-  lcd.setCursor(0,0);
-  lcd.print("Saved to MEMORY ");
-  saveTone();
-  int barWidth = 16;
-  int speed = 10;
-  for (int i = 0; i <= barWidth; i++) {
-      lcd.setCursor(0, 0);
-      for (int j = 0; j < barWidth; j++) {
-          if (j <= i) lcd.print("#");
-          else lcd.print(" ");
-      }
-      delay(speed);
-  }
-  updateLCDMode();
+    File file = LittleFS.open("/buffer.txt", FILE_WRITE);
+    if (file) {
+        file.print(fullBuffer);
+        file.close();
+    } else {
+        Serial.println("Failed to open file for writing");
+        return;
+    }
+
+    lcd.setCursor(0, 0);
+    lcd.print("Saved to MEMORY ");
+    saveTone();
+
+    int barWidth = 16;
+    int speed = 10;
+    for (int i = 0; i <= barWidth; i++) {
+        lcd.setCursor(0, 0);
+        for (int j = 0; j < barWidth; j++) {
+            if (j <= i) lcd.print("#");
+            else lcd.print(" ");
+        }
+        delay(speed);
+    }
+    updateLCDMode();
 }
 
 void loadLineFromEEPROM() {
-    uint8_t marker = EEPROM.read(EEPROM_ADDR + MAX_CHARS);
+    if (!LittleFS.exists("/buffer.txt")) {
+        lcd.setCursor(0, 0);
+        lcd.print("No Save File!   ");
+        delay(1000);
+        updateLCDMode();
+        return;
+    }
+
     String loaded = "";
-    for (int i = 0; i < MAX_CHARS; ++i) {
-        char c = EEPROM.read(EEPROM_ADDR + i);
-        if (c == 0xFF || c == 0x00) continue; 
-        if (c >= 32 && c <= 126) {
-            loaded += c;
-        }
+    File file = LittleFS.open("/buffer.txt", FILE_READ);
+    if (file) {
+        loaded = file.readString();
+        file.close();
     }
 
     while (loaded.endsWith(" ")) loaded.remove(loaded.length() - 1);
     if (loaded.length() == 0) return;
 
-    lcd.setCursor(0, 0);
     lcd.print("Loaded from MEM  ");
     loadTone();
     delay(200);
@@ -559,17 +559,6 @@ void loadLineFromEEPROM() {
     scrollWindow();
     redrawLCDLine();
     updateLCDMode();
-
-    if (bluetoothEnabled && bleKeyboard.isConnected()) {
-        bleKeyboard.write(KEY_END);
-        for (int i = 0; i < loaded.length(); i++) {
-          char c = loaded[i];
-          if (c >= 32 && c <= 126) {
-              bleKeyboard.write(c);
-              delay(35);
-          }
-      }
-    }
 }
 
 struct UEBContraction {
@@ -726,53 +715,21 @@ void setEndContraction(char* buffer, int& bufLen, byte* fullBufferBraille) {
 }
 
 void handleSpaceKeyDirect() {
-    String oldStr = fullBuffer;
-    char buf[MAX_BUFFER]; 
-    int bufLen = fullBuffer.length();
-    fullBuffer.toCharArray(buf, sizeof(buf));
+    if (fullBuffer.length() > 0) {
+        int bufLen = fullBuffer.length();
+        char* buf = new char[MAX_BUFFER];
+        fullBuffer.toCharArray(buf, MAX_BUFFER);
 
-    int oldLen = fullBuffer.length();
+        setEndContraction(buf, bufLen, fullBufferBraille);
+        setFrontContraction(buf, bufLen, contractionPrefix);
 
-    setEndContraction(buf, bufLen, fullBufferBraille);
-    setFrontContraction(buf, bufLen, contractionPrefix);
+        fullBuffer = String(buf);
+        delete[] buf;
 
-    fullBuffer = String(buf);
-    if (::hasContraction) {
-      cursorPos = fullBuffer.length();
-    }
-    ::hasContraction = false;
-
-    sendChangesToBLE(oldStr, fullBuffer);
-}
-
-void sendChangesToBLE(const String& oldStr, const String& newStr) {
-    if (!bluetoothEnabled || !bleKeyboard.isConnected()) return;
-
-    int a = 0;
-    while (a < oldStr.length() && a < newStr.length() && oldStr[a] == newStr[a]) {
-        a++;
-    }
-
-    if (a == oldStr.length() && a == newStr.length()) return;
-
-    int bOld = oldStr.length() - 1;
-    int bNew = newStr.length() - 1;
-
-    while (bOld >= a && bNew >= a && oldStr[bOld] == newStr[bNew]) {
-        bOld--;
-        bNew--;
-    }
-
-    int toDelete = (bOld >= a) ? (bOld - a + 1) : 0;
-    String replacement = (bNew >= a) ? newStr.substring(a, bNew + 1) : "";
-
-    for (int i = 0; i < toDelete; i++) {
-        bleKeyboard.write(KEY_BACKSPACE);
-        delay(3);
-    }
-
-    if (replacement.length() > 0) {
-        bleKeyboard.print(replacement);
+        if (::hasContraction) {
+            cursorPos = fullBuffer.length();
+        }
+        ::hasContraction = false;
     }
 }
 
@@ -837,10 +794,8 @@ void handleApiConnect() {
 
 void handleApiSetText() {
   if (server.hasArg("text")) {
-    String oldStr = fullBuffer;
     String incoming = server.arg("text");
 
-    // Strictly cap incoming string to MAX_BUFFER - 1 (127 characters)
     if (incoming.length() >= MAX_BUFFER) {
       incoming = incoming.substring(0, MAX_BUFFER - 1);
     }
@@ -854,14 +809,12 @@ void handleApiSetText() {
       cursorPos = fullBuffer.length();
     }
 
-    // Safely populate Braille array within buffer limits
     for (int i = 0; i < fullBuffer.length() && i < MAX_BUFFER; i++) {
       fullBufferBraille[i] = charToBraille(fullBuffer[i]);
     }
 
     scrollWindow();
     redrawLCDLine();
-    sendChangesToBLE(oldStr, fullBuffer);
   }
   handleApiState();
 }
@@ -874,7 +827,6 @@ void getSystemStateJson(String &jsonOut) {
     case NUMBER:  line0 = "Mode: Number   "; break;
     case SPECIAL: line0 = "Mode: Special  "; break;
   }
-  if (bluetoothEnabled) line0.setCharAt(15, '*');
 
   String line1 = "";
   if (fullBuffer.length() <= windowStart) {
@@ -923,6 +875,7 @@ void getSystemStateJson(String &jsonOut) {
 
 void handleApiState() {
   String json;
+  json.reserve(5000);
   getSystemStateJson(json);
   server.send(200, "application/json", json);
 }
@@ -966,7 +919,7 @@ void setup() {
   lcd.clear();
 
   keypad.setHoldTime(holdDelay);
-  EEPROM.begin(512);
+  setupLittleFS();
 
   prefs.begin("settings", false);
   feedbackMode = (FeedbackMode)prefs.getUInt("fbmode", 0);
@@ -1046,16 +999,6 @@ void loadTone() {
   sound(2400, 60); delay(200);
   sound(2000, 80); delay(300);
 }
-void btTone() {
-  sound(2400, 60); delay(200);
-  sound(2800, 60); delay(200);
-  sound(3200, 80); delay(300);
-}
-void btdTone() {
-  sound(3200, 60); delay(200);
-  sound(2800, 60); delay(200);
-  sound(2400, 60); delay(300);
-}
 void enterTone() {
   sound(1600, 60); delay(100);
   sound(1600, 60); delay(100);
@@ -1063,6 +1006,60 @@ void enterTone() {
 void modeTone() {
   sound(2000, 120); delay(150);
   sound(2500, 160); delay(300);
+}
+void errorTone() {
+  sound(400, 150); delay(150);
+  sound(300, 250); delay(250);
+}
+void scanTone() {
+  sound(2000, 80); delay(100);
+  sound(2600, 80); delay(100);
+  sound(3200, 120); delay(150);
+}
+
+void triggerScanNotice() {
+  lcd.clear();
+  if (WiFi.status() != WL_CONNECTED) {
+    lcd.setCursor(0, 0);
+    lcd.print(" Connect to     ");
+    lcd.setCursor(0, 1);
+    lcd.print(" internet first ");
+    errorTone();
+
+    // Error animation: Warning exclamation fill
+    int barWidth = 16;
+    int speed = 25;
+    for (int i = 0; i <= barWidth; i++) {
+      lcd.setCursor(0, 1);
+      for (int j = 0; j < barWidth; j++) {
+        if (j <= i) lcd.print("!");
+        else lcd.print(" ");
+      }
+      delay(speed);
+    }
+  } else {
+    lcd.setCursor(0, 0);
+    lcd.print(" Scan using     ");
+    lcd.setCursor(0, 1);
+    lcd.print("external device ");
+    scanTone();
+
+    // Scan animation: Smooth progress fill
+    int barWidth = 16;
+    int speed = 20;
+    for (int i = 0; i <= barWidth; i++) {
+      lcd.setCursor(0, 1);
+      for (int j = 0; j < barWidth; j++) {
+        if (j <= i) lcd.print("#");
+        else lcd.print(" ");
+      }
+      delay(speed);
+    }
+  }
+  delay(400);
+  scrollWindow();
+  redrawLCDLine();
+  updateLCDMode();
 }
 
 char getHeldKey() {
@@ -1092,32 +1089,6 @@ void loop() {
   if (vibActive && millis() - vibStart >= vibDuration) {
     digitalWrite(vibroPin, LOW);
     vibActive = false;
-  }
- 
-  if (bluetoothEnabled) {
-      if (bleKeyboard.isConnected()) {
-          if (!wasConnected) {
-              lcd.setCursor(0,0);
-              lcd.print("Host Connected! ");
-              btTone();
-              delay(2000);
-              scrollWindow();
-              redrawLCDLine();
-              updateLCDMode();
-          }
-          wasConnected = true;
-      } else {
-          if (wasConnected) {
-              lcd.setCursor(0,0);
-              lcd.print("Disconnected!    "); 
-              btdTone();
-              delay(2000);
-              scrollWindow();
-              redrawLCDLine();
-              updateLCDMode();
-          }
-          wasConnected = false;
-      }
   }
 
   if (hashPending && (millis() - hashPressTime >= hashDebounceTime)) {
@@ -1158,18 +1129,11 @@ void handleHashSinglePress() {
         for (int i = 0; i < out.length(); ++i) {
             insertAtCursor(out[i], brailleBits);
         }
-
-        if (bluetoothEnabled && bleKeyboard.isConnected()) {
-            bleKeyboard.print(out);
-        }
     }
 }
 
 void handleHashDoublePress() {
     insertAtCursor(' ', 0);
-    if (bluetoothEnabled && bleKeyboard.isConnected()) {
-        bleKeyboard.write(KEY_RETURN);
-    }
 }
 
 void showFeedbackMode() {
@@ -1185,85 +1149,6 @@ void showFeedbackMode() {
   delay(2000);
   updateLCDMode();
   redrawLCDLine();
-}
-
-void toggleBluetooth() {
-    if (!bluetoothEnabled) {
-        bleKeyboard.begin();
-        bluetoothEnabled = true;
-        lcd.setCursor(0,0);
-        lcd.print("BT HID enabled!");
-        startupTone();
-        int barWidth = 16;
-        int speed = 15;
-        for (int i = 0; i <= barWidth; i++) {
-            lcd.setCursor(0, 1);
-            for (int j = 0; j < barWidth; j++) {
-                if (j <= i) lcd.print("#");
-                else lcd.print(" ");
-            }
-            delay(speed);
-        }
-        scrollWindow();
-        redrawLCDLine();
-
-        unsigned long startTime = millis();
-        lcd.setCursor(0,0);
-        lcd.print("Waiting for host");
-
-        while (!bleKeyboard.isConnected()) {
-            dnsServer.processNextRequest();
-            server.handleClient();
-            unsigned long elapsed = (millis() - startTime) / 1000;
-
-            lcd.setCursor(0,1);
-            lcd.print(elapsed);
-            lcd.print(" sec ");
-
-            if (elapsed >= 45) {
-                bleKeyboard.end();
-                bluetoothEnabled = false;
-
-                lcd.setCursor(0,0);
-                lcd.print("BT Timeout       ");
-                lcd.setCursor(0,1);
-                lcd.print("Turning off...   ");
-                btdTone();
-                delay(2000);
-                btStop();
-
-                scrollWindow();
-                redrawLCDLine();
-                updateLCDMode();
-                return;
-            }
-            delay(50);
-        }
-        scrollWindow();
-        redrawLCDLine();
-        updateLCDMode();
-    } else {
-        bluetoothEnabled = false;
-        btStop();
-        lcd.setCursor(0,0);
-        lcd.print("BT HID disabled!");
-        btdTone();
-        int barWidth = 16;
-        int speed = 15;
-        for (int i = 0; i <= barWidth; i++) {
-            lcd.setCursor(0, 1);
-            for (int j = 0; j < barWidth; j++) {
-                if (j <= i) lcd.print("#");
-                else lcd.print(" ");
-            }
-            delay(speed);
-        }
-        scrollWindow();
-        redrawLCDLine();
-        updateLCDMode();
-        delay(100);
-        BleKeyboard bleKeyboard("Braillify", "Maker", 100);
-    }
 }
 
 void handleKeyPress(char key) {
@@ -1329,7 +1214,10 @@ void handleKeyPress(char key) {
 
         case 'A': saveLineToEEPROM(); break;
         case 'B': loadLineFromEEPROM(); break;
-        case '1': sound(1800, 70); break;
+        
+        case '1': 
+          triggerScanNotice();
+          break;
 
         default: break;
     }
