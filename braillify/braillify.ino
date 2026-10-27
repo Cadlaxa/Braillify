@@ -931,9 +931,11 @@ void updateFirmwareFromGitHub(const String& binUrl) {
   scanTone();
 
   WiFiClientSecure client;
-  client.setInsecure(); // Skip SSL certificate validation
+  client.setInsecure(); // Bypass SSL certificate verification for redirect hosts
 
+  // Force HTTPUpdate to follow redirects across domains (GitHub -> AWS S3)
   httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  httpUpdate.rebootOnUpdate(false);
 
   httpUpdate.onProgress([](int current, int total) {
     int percentage = (current * 100) / total;
@@ -951,8 +953,9 @@ void updateFirmwareFromGitHub(const String& binUrl) {
       lcd.setCursor(0, 0);
       lcd.print(" Update Failed! ");
       lcd.setCursor(0, 1);
-      lcd.print(" Error Code ");
+      lcd.print(" Err: ");
       lcd.print(httpUpdate.getLastError());
+      lcd.print(" ");
       errorTone();
       delay(3000);
       break;
@@ -1028,7 +1031,7 @@ void setup() {
   
   // Register GitHub Remote OTA Route
   server.on("/api/ota_update", HTTP_GET, []() {
-    String defaultUrl = "https://raw.githubusercontent.com/Cadlaxa/Braillify/main/firmware.bin";
+    String defaultUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/firmware.bin";
     String targetUrl = server.hasArg("url") ? server.arg("url") : defaultUrl;
     
     server.send(200, "application/json", "{\"status\":\"OTA Update Started! Watch ESP32 LCD display.\"}");
