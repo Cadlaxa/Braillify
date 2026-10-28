@@ -13,9 +13,11 @@
 #include <WiFiClientSecure.h>
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
-#define FIRMWARE_VERSION "1.0.3.6"
+#include <vector>
+#define FIRMWARE_VERSION "1.0.4"
 
 Preferences prefs;
+uint32_t bootId = 0;
 
 // LCD setup (I2C)
 #define I2C_ADDR 0x27  
@@ -199,6 +201,14 @@ String brailleToText(byte b) {
   return "~";
 }
 
+String escapeJsonString(String src) {
+  src.replace("\\", "\\\\");
+  src.replace("\"", "\\\"");
+  src.replace("\r", "");
+  src.replace("\n", "");
+  return src;
+}
+
 const byte brailleNumDots[] = {1,3,9,25,17,11,27,19,10,26};
 const char brailleNumChars[] = {'1','2','3','4','5','6','7','8','9','0'};
 
@@ -326,7 +336,8 @@ String brailleToChar(byte bits, bool commitState = true) {
     if (nextText || textLock) { currentMode = TEXT; nextText = false; clearTempIndicator(); }
   }
 
-  Mode activeMode = commitState ? currentMode : evalMode;
+  // Use evalMode whenever currentMode is AUTO so AUTO mode resolves characters properly on commit
+  Mode activeMode = (currentMode == AUTO) ? evalMode : currentMode;
 
   if (activeMode == TEXT) {
       out = brailleToText(pattern);
@@ -348,7 +359,7 @@ String brailleToChar(byte bits, bool commitState = true) {
       if (n != '?') out = String(n);
       else {
           String s = specialFromBraille(pattern);
-          if (s != "") out = String(s);
+          if (s != "0") out = String(s);
           else out = brailleToText(pattern);
       }
   }
@@ -779,9 +790,160 @@ void startUP() {
   redrawLCDLine();
 }
 
+struct WifiCred {
+  String ssid;
+  String pass;
+};
+std::vector<WifiCred> knownWifis;
+
+void loadKnownWifis() {
+  knownWifis.clear();
+  if (!LittleFS.exists("/wifis.txt")) return;
+  File f = LittleFS.open("/wifis.txt", FILE_READ);
+  if (!f) return;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+    int tabIdx = line.indexOf('\t');
+    if (tabIdx != -1) {
+      WifiCred w;
+      w.ssid = line.substring(0, tabIdx);
+      w.pass = line.substring(tabIdx + 1);
+      knownWifis.push_back(w);
+    }
+  }
+  f.close();
+}
+
+void saveKnownWifis() {
+  File f = LittleFS.open("/wifis.txt", FILE_WRITE);
+  if (!f) return;
+  for (const auto& w : knownWifis) {
+    f.print(w.ssid);
+    f.print('\t');
+    f.println(w.pass);
+  }
+  f.close();
+}
+
+void addOrUpdateWifi(String ssid, String pass) {
+  bool found = false;
+  for (auto& w : knownWifis) {
+    if (w.ssid == ssid) {
+      w.pass = pass;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    WifiCred w;
+    w.ssid = ssid;
+    w.pass = pass;
+    knownWifis.push_back(w);
+  }
+  saveKnownWifis();
+}
+
+void forgetWifi(String ssid) {
+  for (auto it = knownWifis.begin(); it != knownWifis.end(); ++it) {
+    if (it->ssid == ssid) {
+      knownWifis.erase(it);
+      break;
+    }
+  }
+  saveKnownWifis();
+}
+
+void autoConnectWifi() {
+  loadKnownWifis();
+  if (knownWifis.empty()) {
+    wifiStatusMsg = "AP Mode Active (192.168.4.1)";
+    return;
+  }
+
+  int n = WiFi.scanNetworks();
+  String bestSSID = "";
+  String bestPass = "";
+  int bestRSSI = -999;
+
+  for (int i = 0; i < n; ++i) {
+    String scannedSSID = WiFi.SSID(i);
+    int rssi = WiFi.RSSI(i);
+    for (const auto& w : knownWifis) {
+      if (w.ssid == scannedSSID && rssi > bestRSSI) {
+        bestRSSI = rssi;
+        bestSSID = w.ssid;
+        bestPass = w.pass;
+      }
+    }
+  }
+
+  if (bestSSID.length() > 0) {
+    WiFi.begin(bestSSID.c_str(), bestPass.c_str());
+    wifiSSID = bestSSID;
+    wifiPass = bestPass;
+    wifiStatusMsg = "Connecting to " + bestSSID + "...";
+  } else {
+    // Fallback to last added network if scan yielded no match
+    wifiSSID = knownWifis.back().ssid;
+    wifiPass = knownWifis.back().pass;
+    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+    wifiStatusMsg = "Connecting to " + wifiSSID + "...";
+  }
+}
+
 // ---------- Web Server Endpoints ----------
 void handleRoot() {
   server.send(200, "text/html", index_html);
+}
+
+void handleApiSavedWifis() {
+  loadKnownWifis();
+  String json = "[";
+  for (size_t i = 0; i < knownWifis.size(); ++i) {
+    json += "{";
+    json += "\"ssid\":\"" + escapeJsonString(knownWifis[i].ssid) + "\",";
+    json += "\"pass\":\"" + escapeJsonString(knownWifis[i].pass) + "\"";
+    json += "}";
+    if (i < knownWifis.size() - 1) json += ",";
+  }
+  json += "]";
+  server.send(200, "application/json", json);
+}
+
+void handleApiForgetWifi() {
+  if (server.hasArg("ssid")) {
+    String targetSSID = server.arg("ssid");
+    
+    // Remove from saved storage list
+    forgetWifi(targetSSID);
+
+    // If currently connected to this exact network, disconnect the radio
+    if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == targetSSID) {
+      WiFi.disconnect(false, true); // Disconnect STA radio and turn off auto-reconnect
+      wifiStatusMsg = "AP Mode Active (192.168.4.1)";
+    }
+
+    server.send(200, "application/json", "{\"status\":\"Network forgotten\"}");
+  } else {
+    server.send(400, "application/json", "{\"status\":\"Missing SSID\"}");
+  }
+}
+
+void handleApiConnect() {
+  if (server.hasArg("ssid")) {
+    wifiSSID = server.arg("ssid");
+    wifiPass = server.hasArg("pass") ? server.arg("pass") : "";
+
+    addOrUpdateWifi(wifiSSID, wifiPass);
+
+    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+    wifiStatusMsg = "Connecting to " + wifiSSID + "...";
+  }
+
+  String json = "{\"status\":\"" + wifiStatusMsg + "\"}";
+  server.send(200, "application/json", json);
 }
 
 void handleApiScan() {
@@ -795,24 +957,6 @@ void handleApiScan() {
     if (i < n - 1) json += ",";
   }
   json += "]";
-  server.send(200, "application/json", json);
-}
-
-void handleApiConnect() {
-  if (server.hasArg("ssid")) {
-    wifiSSID = server.arg("ssid");
-    wifiPass = server.hasArg("pass") ? server.arg("pass") : "";
-
-    prefs.begin("wifi", false);
-    prefs.putString("ssid", wifiSSID);
-    prefs.putString("pass", wifiPass);
-    prefs.end();
-
-    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
-    wifiStatusMsg = "Connecting to " + wifiSSID + "...";
-  }
-
-  String json = "{\"status\":\"" + wifiStatusMsg + "\"}";
   server.send(200, "application/json", json);
 }
 
@@ -955,12 +1099,15 @@ void getSystemStateJson(String &jsonOut) {
   jsonBrailleArray += "]";
 
   if (WiFi.status() == WL_CONNECTED) {
-    wifiStatusMsg = "Connected: " + WiFi.localIP().toString();
+    String currentSSID = WiFi.SSID();
+    if (currentSSID.length() == 0) currentSSID = wifiSSID;
+    wifiStatusMsg = "Connected to: " + currentSSID;
   }
 
   int reportedVolume = (feedbackMode == VIBRATE_ONLY) ? 0 : soundVolume;
 
   jsonOut = "{";
+  jsonOut += "\"bootId\":" + String(bootId) + ",";
   jsonOut += "\"bits\":" + String(brailleBits) + ",";
   jsonOut += "\"mode\":" + String((int)currentMode) + ",";
   jsonOut += "\"cursor\":" + String(cursorPos) + ",";
@@ -1126,6 +1273,7 @@ void updateFirmwareFromGitHub(const String& binUrl) {
 
 // ---------- ESP32 Setup & Loop ----------
 void setup() {
+  bootId = esp_random();
   Serial.begin(9600);
   
   // LEDC Channel 0 for Buzzer PWM Sound / Volume
@@ -1177,11 +1325,14 @@ void setup() {
   server.on("/api/key", handleApiKey);
   server.on("/api/setcursor", handleApiSetCursor);
   server.on("/api/scan", handleApiScan);
+  server.on("/api/wifi/saved", handleApiSavedWifis);
+  server.on("/api/wifi/forget", handleApiForgetWifi);
   server.on("/api/connect", handleApiConnect);
   server.on("/api/settext", handleApiSetText);
   server.on("/api/settings", handleApiSettings);
   server.on("/api/power", handleApiPower);
   server.on("/api/reboot", handleApiReboot);
+  autoConnectWifi();
   
   // Register GitHub Remote OTA Route
   server.on("/api/ota_update", HTTP_GET, []() {

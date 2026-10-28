@@ -341,6 +341,13 @@ const char index_html[] PROGMEM = R"rawliteral(
     
     <div class="wifi-status-info" id="wifi-status-label">AP Mode Active (192.168.4.1)</div>
 
+    <!-- Remembered Networks Section -->
+    <div class="section-title" style="margin-bottom: 6px;">Saved Networks</div>
+    <div class="wifi-list" id="saved-wifi-list" style="max-height: 100px; margin-bottom: 12px;">
+      <div class="wifi-item" style="justify-content:center;color:#57606a;">Loading saved networks...</div>
+    </div>
+
+    <!-- Available Networks Section -->
     <div class="fc-actions" style="margin-bottom:10px;">
       <button class="fc-btn" onclick="scanWifiNetworks()">🔍 Scan Available Wi-Fi</button>
     </div>
@@ -355,7 +362,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
 
     <div class="fc-actions">
-      <button class="fc-btn" style="background:#e8f5e9;color:#2e7d32;" onclick="connectWifi()">Connect Wi-Fi</button>
+      <button class="fc-btn" style="background:#e8f5e9;color:#2e7d32;" onclick="connectWifi()">Save & Connect</button>
     </div>
   </div>
 </div>
@@ -413,8 +420,61 @@ function closeFlashcardModal(){ document.getElementById('flashcard-modal').class
 
 function openWifiModal(){ 
   document.getElementById('wifi-modal').classList.add('active'); 
+  loadSavedWifis();
   scanWifiNetworks();
 }
+
+function loadSavedWifis() {
+  const listEl = document.getElementById('saved-wifi-list');
+  fetch('/api/wifi/saved')
+    .then(async res => {
+      if (!res.ok) throw new Error('HTTP Status ' + res.status);
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('ESP32 returned non-JSON response (Re-flash required)');
+      }
+      return res.json();
+    })
+    .then(networks => {
+      listEl.innerHTML = '';
+      if (!networks || networks.length === 0) {
+        listEl.innerHTML = '<div class="wifi-item" style="justify-content:center;color:#57606a;">No saved networks</div>';
+        return;
+      }
+      networks.forEach(net => {
+        const item = document.createElement('div');
+        item.className = 'wifi-item';
+        item.innerHTML = `
+          <span>${net.ssid}</span>
+          <div style="display:flex; gap:6px;">
+            <button class="action-btn" style="padding:2px 6px; font-size:0.7rem;" onclick="editSavedWifi('${net.ssid}', '${net.pass}')">✏️ Edit</button>
+            <button class="action-btn" style="padding:2px 6px; font-size:0.7rem; background:#ffebee; color:#c62828;" onclick="forgetWifi('${net.ssid}')">🗑️ Forget</button>
+          </div>
+        `;
+        listEl.appendChild(item);
+      });
+    })
+    .catch(err => {
+      console.error('[Wi-Fi Load Error]', err);
+      listEl.innerHTML = '<div class="wifi-item" style="justify-content:center;color:red;">Failed to load saved networks</div>';
+    });
+}
+
+function editSavedWifi(ssid, pass) {
+  document.getElementById('wifi-ssid').value = ssid;
+  document.getElementById('wifi-pass').value = pass;
+}
+
+function forgetWifi(ssid) {
+  if (confirm(`Forget saved network "${ssid}"?`)) {
+    fetch('/api/wifi/forget?ssid=' + encodeURIComponent(ssid))
+      .then(r => r.json())
+      .then(() => {
+        loadSavedWifis();
+      });
+  }
+}
+
 function closeWifiModal(){ document.getElementById('wifi-modal').classList.remove('active'); }
 
 let currentFeedbackMode = 0; // 0 = SOUND_ONLY, 1 = VIBRATE_ONLY
@@ -850,6 +910,8 @@ function flashCopyStatus(){
   setTimeout(() => label.innerText = 'Copy Text', 1500);
 }
 
+let currentBootId = null;
+
 function updateState(d){
   const textLenIncreased = d.fullText.length > currentFullText.length;
   const charBeforeCursor = d.cursor > 0 ? d.fullText.charAt(d.cursor - 1) : '';
@@ -861,6 +923,17 @@ function updateState(d){
   document.getElementById('lcd-line1').innerText = d.lcd1;
   document.getElementById('char-preview').innerText = d.preview || '~';
   renderFullText(d.fullText || "", d.cursor || 0, d.brailleArray || []);
+
+  if (d.bootId !== undefined) {
+    if (currentBootId === null) {
+      currentBootId = d.bootId;
+    } else if (currentBootId !== d.bootId) {
+      console.log('[Braillify] Device reboot detected. Refreshing page...');
+      location.reload();
+      return;
+    }
+  }
+    
   if(d.wifiStatus) document.getElementById('wifi-status-label').innerText = d.wifiStatus;
 
   if (d.feedbackMode !== undefined) {
