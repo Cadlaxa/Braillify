@@ -14,7 +14,7 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.4"
+#define FIRMWARE_VERSION "1.0.5"
 
 Preferences prefs;
 uint32_t bootId = 0;
@@ -26,6 +26,7 @@ LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 #define LCD_BACKLIGHT_PIN 18 // PWM Backlight Control Pin (Optional Header Hookup)
 int lcdBrightness = 100;     // 0 - 100%
 int soundVolume = 100;       // 0 - 100%
+int ttsMode = 1;             // 0: OFF, 1: CHAR_AND_WORD, 2: WORD_ONLY, 3: FULL_TEXT
 
 // Web Server & Captive Portal DNS
 WebServer server(80);
@@ -69,15 +70,16 @@ bool lastButtonState = HIGH;
 unsigned long lastBeep = 0;
 const unsigned long debounceMillis = 35;
 
-// EEPROM / Storage settings
-const int EEPROM_ADDR = 0;
+// Storage settings
 const int MAX_CHARS = 1024;
 int loadingProgress = 0;
 unsigned long lastUpdate = 0;
 
-// Braille / editor state
+// Braille / editor state & text selection
 byte brailleBits = 0;
 int cursorPos = 0;
+int selectStart = 0;
+int selectEnd = 0;
 String fullBuffer = "";
 int windowStart = 0;
 bool hasContraction = false;
@@ -154,6 +156,30 @@ void triggerScanNotice();
 void updateFirmwareFromGitHub(const String& binUrl);
 void applyBrightness(int percent);
 byte charToBraille(char c);
+
+// Text Selection Helpers
+bool hasSelection() {
+  return selectStart != selectEnd && selectStart >= 0 && selectEnd <= fullBuffer.length() && selectStart < selectEnd;
+}
+
+void clearSelection() {
+  selectStart = cursorPos;
+  selectEnd = cursorPos;
+}
+
+void deleteSelection() {
+  if (!hasSelection()) return;
+  int start = min(selectStart, selectEnd);
+  int end = max(selectStart, selectEnd);
+  fullBuffer = fullBuffer.substring(0, start) + fullBuffer.substring(end);
+  for (int i = start; i < fullBuffer.length(); i++) {
+    fullBufferBraille[i] = fullBufferBraille[i + (end - start)];
+  }
+  cursorPos = start;
+  clearSelection();
+  scrollWindow();
+  redrawLCDLine();
+}
 
 // ---------- Special & mapping functions ----------
 const char specialOutput[][8] = {
@@ -336,7 +362,6 @@ String brailleToChar(byte bits, bool commitState = true) {
     if (nextText || textLock) { currentMode = TEXT; nextText = false; clearTempIndicator(); }
   }
 
-  // Use evalMode whenever currentMode is AUTO so AUTO mode resolves characters properly on commit
   Mode activeMode = (currentMode == AUTO) ? evalMode : currentMode;
 
   if (activeMode == TEXT) {
@@ -418,22 +443,47 @@ void scrollWindow() {
 }
 
 void redrawLCDLine() {
-  lcd.setCursor(0,1);
-  String visible;
-  if (fullBuffer.length() <= windowStart) {
-    visible = "";
+  if (hasSelection()) {
+    int selLen = selectEnd - selectStart;
+    String selSub = fullBuffer.substring(selectStart, selectEnd);
+    lcd.setCursor(0, 0);
+    String l0 = "Sel(" + String(selLen) + "):" + selSub;
+    while (l0.length() < 16) l0 += " ";
+    if (l0.length() > 16) l0 = l0.substring(0, 16);
+    lcd.print(l0);
+
+    lcd.setCursor(0, 1);
+    String visible = "";
+    for (int i = windowStart; i < windowStart + 16 && i <= fullBuffer.length(); i++) {
+      if (i == selectStart) visible += "[";
+      if (i == selectEnd) visible += "]";
+      if (i < fullBuffer.length()) visible += fullBuffer[i];
+    }
+    while (visible.length() < 16) visible += " ";
+    if (visible.length() > 16) visible = visible.substring(0, 16);
+    lcd.print(visible);
   } else {
-    int end = windowStart + 16;
-    if (end > fullBuffer.length()) end = fullBuffer.length();
-    visible = fullBuffer.substring(windowStart, end);
+    updateLCDMode();
+    lcd.setCursor(0,1);
+    String visible;
+    if (fullBuffer.length() <= windowStart) {
+      visible = "";
+    } else {
+      int end = windowStart + 16;
+      if (end > fullBuffer.length()) end = fullBuffer.length();
+      visible = fullBuffer.substring(windowStart, end);
+    }
+    lcd.print(visible);
+    for (int i = visible.length(); i < 16; i++) lcd.print(' ');
+    int lcdCursor = getLcdCursor();
+    lcd.setCursor(lcdCursor, 1);
   }
-  lcd.print(visible);
-  for (int i = visible.length(); i < 16; i++) lcd.print(' ');
-  int lcdCursor = getLcdCursor();
-  lcd.setCursor(lcdCursor, 1);
 }
 
 void insertAtCursor(char c, byte brailleCell) {
+    if (hasSelection()) {
+      deleteSelection();
+    }
     if (fullBuffer.length() >= MAX_BUFFER) return;
     fullBuffer = fullBuffer.substring(0, cursorPos) + c + fullBuffer.substring(cursorPos);
     for (int i = fullBuffer.length() - 1; i > cursorPos; i--) {
@@ -444,11 +494,16 @@ void insertAtCursor(char c, byte brailleCell) {
     }
     fullBufferBraille[cursorPos] = brailleCell;
     cursorPos++;
+    clearSelection();
     scrollWindow();
     redrawLCDLine();
 }
 
 void backspaceAtCursor() {
+  if (hasSelection()) {
+    deleteSelection();
+    return;
+  }
   if (cursorPos == 0) return;
   fullBuffer = fullBuffer.substring(0, cursorPos - 1) + fullBuffer.substring(cursorPos);
   for (int i = cursorPos - 1; i < fullBuffer.length(); i++) {
@@ -456,6 +511,7 @@ void backspaceAtCursor() {
   }
   cursorPos--;
   if (windowStart > 0 && cursorPos < windowStart) windowStart--;
+  clearSelection();
   scrollWindow();
   redrawLCDLine();
 }
@@ -467,6 +523,7 @@ void insertSpaceAtCursor() {
 void moveCursorLeft() {
   if (cursorPos > 0) {
       cursorPos--;
+      clearSelection();
       scrollWindow();
       redrawLCDLine();
   }
@@ -475,6 +532,7 @@ void moveCursorLeft() {
 void moveCursorRight() {
   if (cursorPos < fullBuffer.length()) {
       cursorPos++;
+      clearSelection();
       scrollWindow();
       redrawLCDLine();
   }
@@ -563,8 +621,16 @@ void loadLineFromEEPROM() {
 
     while (loaded.endsWith(" ")) loaded.remove(loaded.length() - 1);
     if (loaded.length() == 0) return;
+
+    // Append loaded memory at current cursorPos (insert leading space if needed)
+    if (fullBuffer.length() > 0 && cursorPos > 0 && fullBuffer[cursorPos - 1] != ' ') {
+        insertSpaceAtCursor();
+    }
+
+    clearSelection();
+
     lcd.setCursor(0, 0);
-    lcd.print("Loaded from MEM  ");
+    lcd.print("Appended MEMORY ");
     loadTone();
     smartDelay(200);
 
@@ -661,102 +727,62 @@ const UEBContraction uebContractions[] = {
 
 const int contractionCount = sizeof(uebContractions)/sizeof(uebContractions[0]);
 
-byte getLastNonCapitalBrailleCell(const byte *arr, int len) {
-    for (int i = len - 1; i >= 0; --i) {
-        if (arr[i] != 32) return arr[i];
+void handleSpaceKeyDirect() {
+    if (fullBuffer.length() == 0 || cursorPos == 0) return;
+
+    // Isolate active target word ending at cursorPos
+    int wordStart = cursorPos - 1;
+    while (wordStart >= 0 && fullBuffer[wordStart] != ' ') {
+        wordStart--;
     }
-    return 0;
-}
+    wordStart++;
 
-void applyCaseStyle(const char* original, char* output) {
-    int n = strlen(original);
-    bool allUpper = true;
-    bool firstUpper = false;
+    if (cursorPos <= wordStart) return;
 
-    if (n > 0 && original[0] >= 'A' && original[0] <= 'Z') firstUpper = true;
-    for (int i = 0; i < n; i++)
-        if (!(original[i] >= 'A' && original[i] <= 'Z')) { allUpper = false; break; }
+    String targetWord = fullBuffer.substring(wordStart, cursorPos);
+    String lowerWord = targetWord;
+    lowerWord.toLowerCase();
 
-    if (allUpper) { for (int i = 0; output[i]; i++) if (output[i] >= 'a' && output[i] <= 'z') output[i] -= 32; return; }
-    if (firstUpper && output[0] >= 'a' && output[0] <= 'z') output[0] -= 32;
-}
-
-void applyContraction(char* buffer, int& bufLen, byte* brailleArr = nullptr, byte prefixPassed = 0, bool front = true) {
-    int bestLen = 0, bestIndex = -1;
-    char letters[8];
-    byte lastBraille = brailleArr ? getLastNonCapitalBrailleCell(brailleArr, bufLen) : 0;
+    int bestIndex = -1;
 
     for (int i = 0; i < contractionCount; i++) {
-        byte prefix = uebContractions[i].prefixDots;
-        strncpy(letters, uebContractions[i].letters, 7);
-        letters[7] = '\0';
-
-        int lettersLen = strlen(letters);
-        if (lettersLen == 0 || lettersLen > bufLen) continue;
-
-        bool match = true;
-        for (int k = 0; k < lettersLen; k++) {
-            char c1 = buffer[bufLen - lettersLen + k];
-            if (c1 >= 'A' && c1 <= 'Z') c1 += 32;
-            if (c1 != letters[k]) { match = false; break; }
+        String pattern = String(uebContractions[i].letters);
+        pattern.trim();
+        if (pattern.startsWith(">") || pattern.startsWith("-")) {
+            pattern = pattern.substring(1);
         }
-        if (!match) continue;
 
-        if (front) {
-            int startPos = bufLen - lettersLen;
-            if (startPos > 0 && buffer[startPos - 1] != ' ') continue;
-            if (prefix != 0 && prefix != prefixPassed) continue;
-        } else if (brailleArr && prefix != 0 && prefix != lastBraille) continue;
-
-        if (lettersLen > bestLen) { bestLen = lettersLen; bestIndex = i; }
+        if (lowerWord == pattern) {
+            bestIndex = i;
+            break;
+        }
     }
 
-    if (bestIndex < 0) return;
+    if (bestIndex >= 0) {
+        String replacement = String(uebContractions[bestIndex].contraction);
+        replacement.trim();
 
-    ::hasContraction = true;
-    char contraction[16];
-    strncpy(contraction, uebContractions[bestIndex].contraction, 15);
-    contraction[15] = '\0';
-    int contractionLen = strlen(contraction);
-
-    char original[16];
-    strncpy(original, buffer + bufLen - bestLen, bestLen);
-    original[bestLen] = '\0';
-
-    applyCaseStyle(original, contraction);
-
-    if (!front && brailleArr)
-        for (int k = bufLen - bestLen; k < bufLen; k++) brailleArr[k] = 0;
-
-    memcpy(buffer + bufLen - bestLen, contraction, contractionLen);
-    bufLen = bufLen - bestLen + contractionLen;
-    buffer[bufLen] = '\0';
-}
-
-void setFrontContraction(char* buffer, int& bufLen, byte prefixPassedToFunction) {
-    applyContraction(buffer, bufLen, nullptr, prefixPassedToFunction, true);
-}
-
-void setEndContraction(char* buffer, int& bufLen, byte* fullBufferBraille) {
-    applyContraction(buffer, bufLen, fullBufferBraille, 0, false);
-}
-
-void handleSpaceKeyDirect() {
-    if (fullBuffer.length() > 0) {
-        int bufLen = fullBuffer.length();
-        char* buf = new char[MAX_BUFFER];
-        fullBuffer.toCharArray(buf, MAX_BUFFER);
-
-        setEndContraction(buf, bufLen, fullBufferBraille);
-        setFrontContraction(buf, bufLen, contractionPrefix);
-
-        fullBuffer = String(buf);
-        delete[] buf;
-
-        if (::hasContraction) {
-            cursorPos = fullBuffer.length();
+        // Preserve capitalization
+        bool allUpper = true;
+        bool firstUpper = (targetWord.length() > 0 && targetWord[0] >= 'A' && targetWord[0] <= 'Z');
+        for (int k = 0; k < targetWord.length(); k++) {
+            if (!(targetWord[k] >= 'A' && targetWord[k] <= 'Z')) { allUpper = false; break; }
         }
-        ::hasContraction = false;
+
+        if (allUpper) {
+            replacement.toUpperCase();
+        } else if (firstUpper && replacement.length() > 0) {
+            replacement[0] = toupper(replacement[0]);
+        }
+
+        fullBuffer = fullBuffer.substring(0, wordStart) + replacement + fullBuffer.substring(cursorPos);
+        cursorPos = wordStart + replacement.length();
+
+        for (int k = 0; k < replacement.length(); k++) {
+            fullBufferBraille[wordStart + k] = charToBraille(replacement[k]);
+        }
+
+        ::hasContraction = true;
     }
 }
 
@@ -885,7 +911,6 @@ void autoConnectWifi() {
     wifiPass = bestPass;
     wifiStatusMsg = "Connecting to " + bestSSID + "...";
   } else {
-    // Fallback to last added network if scan yielded no match
     wifiSSID = knownWifis.back().ssid;
     wifiPass = knownWifis.back().pass;
     WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
@@ -916,12 +941,10 @@ void handleApiForgetWifi() {
   if (server.hasArg("ssid")) {
     String targetSSID = server.arg("ssid");
     
-    // Remove from saved storage list
     forgetWifi(targetSSID);
 
-    // If currently connected to this exact network, disconnect the radio
     if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == targetSSID) {
-      WiFi.disconnect(false, true); // Disconnect STA radio and turn off auto-reconnect
+      WiFi.disconnect(false, true);
       wifiStatusMsg = "AP Mode Active (192.168.4.1)";
     }
 
@@ -977,6 +1000,8 @@ void handleApiSetText() {
       cursorPos = fullBuffer.length();
     }
 
+    clearSelection();
+
     for (int i = 0; i < fullBuffer.length() && i < MAX_BUFFER; i++) {
       fullBufferBraille[i] = charToBraille(fullBuffer[i]);
     }
@@ -1006,9 +1031,9 @@ void handleApiSettings() {
 
     if (newVol > 0) {
       soundVolume = newVol;
-      feedbackMode = SOUND_ONLY; // Unmute
+      feedbackMode = SOUND_ONLY;
     } else {
-      feedbackMode = VIBRATE_ONLY; // Mute
+      feedbackMode = VIBRATE_ONLY;
     }
 
     if (oldMode != feedbackMode) {
@@ -1020,13 +1045,16 @@ void handleApiSettings() {
     volumeUpdated = true;
   }
 
+  if (server.hasArg("ttsMode")) {
+    ttsMode = server.arg("ttsMode").toInt();
+    prefs.putInt("ttsMode", ttsMode);
+  }
+
   prefs.end();
 
-  // If mute mode toggled via website, flash the screen message
   if (modeChanged) {
     showFeedbackMode();
   } 
-  // Otherwise, if volume just changed while sound is active, play preview chime
   else if (volumeUpdated && feedbackMode == SOUND_ONLY && soundVolume > 0) {
     sound(2200, 70);
     smartDelay(90);
@@ -1062,11 +1090,19 @@ void handleApiReboot() {
 
 void getSystemStateJson(String &jsonOut) {
   String line0 = "";
-  switch(currentMode) {
-    case AUTO:    line0 = "Mode: AUTO     "; break;
-    case TEXT:    line0 = "Mode: Text     "; break;
-    case NUMBER:  line0 = "Mode: Number   "; break;
-    case SPECIAL: line0 = "Mode: Special  "; break;
+  if (hasSelection()) {
+    int selLen = selectEnd - selectStart;
+    String selSub = fullBuffer.substring(selectStart, selectEnd);
+    line0 = "Sel(" + String(selLen) + "):" + selSub;
+    while (line0.length() < 16) line0 += " ";
+    if (line0.length() > 16) line0 = line0.substring(0, 16);
+  } else {
+    switch(currentMode) {
+      case AUTO:    line0 = "Mode: AUTO     "; break;
+      case TEXT:    line0 = "Mode: Text     "; break;
+      case NUMBER:  line0 = "Mode: Number   "; break;
+      case SPECIAL: line0 = "Mode: Special  "; break;
+    }
   }
 
   String line1 = "";
@@ -1079,7 +1115,6 @@ void getSystemStateJson(String &jsonOut) {
   }
   while (line1.length() < 16) line1 += " ";
 
-  // Pass false to generate preview string without mutating state variables
   String preview = brailleToChar(brailleBits, false);
   if (preview == "") preview = " ";
 
@@ -1111,6 +1146,9 @@ void getSystemStateJson(String &jsonOut) {
   jsonOut += "\"bits\":" + String(brailleBits) + ",";
   jsonOut += "\"mode\":" + String((int)currentMode) + ",";
   jsonOut += "\"cursor\":" + String(cursorPos) + ",";
+  jsonOut += "\"selStart\":" + String(selectStart) + ",";
+  jsonOut += "\"selEnd\":" + String(selectEnd) + ",";
+  jsonOut += "\"ttsMode\":" + String(ttsMode) + ",";
   jsonOut += "\"preview\":\"" + preview + "\",";
   jsonOut += "\"lcd0\":\"" + line0 + "\",";
   jsonOut += "\"lcd1\":\"" + line1 + "\",";
@@ -1142,13 +1180,29 @@ void handleApiKey() {
 }
 
 void handleApiSetCursor() {
-  if (server.hasArg("pos")) {
+  if (server.hasArg("start") && server.hasArg("end")) {
+    int s = server.arg("start").toInt();
+    int e = server.arg("end").toInt();
+    s = constrain(s, 0, fullBuffer.length());
+    e = constrain(e, 0, fullBuffer.length());
+    if (s <= e) {
+      selectStart = s;
+      selectEnd = e;
+      cursorPos = e;
+    } else {
+      selectStart = e;
+      selectEnd = s;
+      cursorPos = s;
+    }
+    scrollWindow();
+    redrawLCDLine();
+  } else if (server.hasArg("pos")) {
     int newPos = server.arg("pos").toInt();
     if (newPos >= 0 && newPos <= fullBuffer.length()) {
       cursorPos = newPos;
+      clearSelection();
       scrollWindow();
       redrawLCDLine();
-      sound(1800, 40);
     }
   }
   handleApiState();
@@ -1299,6 +1353,7 @@ void setup() {
   feedbackMode = (FeedbackMode)prefs.getUInt("fbmode", 0);
   lcdBrightness = prefs.getInt("bright", 100);
   soundVolume = prefs.getInt("vol", 100);
+  ttsMode = prefs.getInt("ttsMode", 1);
   prefs.end();
 
   applyBrightness(lcdBrightness);
@@ -1423,9 +1478,8 @@ void sound(int freq, int dur) {
   unsigned long now = millis();
   if (now - lastBeep >= debounceMillis) {
     if (feedbackMode != VIBRATE_ONLY && soundVolume > 0) {
-      // Logarithmic perceived loudness scaling for piezo buzzers
       float normalized = soundVolume / 100.0f;
-      int duty = (int)(128.0f * pow(normalized, 2.8f)); // Power of 2.8 curve
+      int duty = (int)(128.0f * pow(normalized, 2.8f));
       
       if (duty < 1) duty = 1;
 
