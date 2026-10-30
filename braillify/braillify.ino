@@ -14,7 +14,7 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.5"
+#define FIRMWARE_VERSION "1.0.5.1"
 
 Preferences prefs;
 uint32_t bootId = 0;
@@ -622,7 +622,6 @@ void loadLineFromEEPROM() {
     while (loaded.endsWith(" ")) loaded.remove(loaded.length() - 1);
     if (loaded.length() == 0) return;
 
-    // Append loaded memory at current cursorPos (insert leading space if needed)
     if (fullBuffer.length() > 0 && cursorPos > 0 && fullBuffer[cursorPos - 1] != ' ') {
         insertSpaceAtCursor();
     }
@@ -730,7 +729,6 @@ const int contractionCount = sizeof(uebContractions)/sizeof(uebContractions[0]);
 void handleSpaceKeyDirect() {
     if (fullBuffer.length() == 0 || cursorPos == 0) return;
 
-    // Isolate active target word ending at cursorPos
     int wordStart = cursorPos - 1;
     while (wordStart >= 0 && fullBuffer[wordStart] != ' ') {
         wordStart--;
@@ -762,7 +760,6 @@ void handleSpaceKeyDirect() {
         String replacement = String(uebContractions[bestIndex].contraction);
         replacement.trim();
 
-        // Preserve capitalization
         bool allUpper = true;
         bool firstUpper = (targetWord.length() > 0 && targetWord[0] >= 'A' && targetWord[0] <= 'Z');
         for (int k = 0; k < targetWord.length(); k++) {
@@ -888,34 +885,10 @@ void autoConnectWifi() {
     return;
   }
 
-  int n = WiFi.scanNetworks();
-  String bestSSID = "";
-  String bestPass = "";
-  int bestRSSI = -999;
-
-  for (int i = 0; i < n; ++i) {
-    String scannedSSID = WiFi.SSID(i);
-    int rssi = WiFi.RSSI(i);
-    for (const auto& w : knownWifis) {
-      if (w.ssid == scannedSSID && rssi > bestRSSI) {
-        bestRSSI = rssi;
-        bestSSID = w.ssid;
-        bestPass = w.pass;
-      }
-    }
-  }
-
-  if (bestSSID.length() > 0) {
-    WiFi.begin(bestSSID.c_str(), bestPass.c_str());
-    wifiSSID = bestSSID;
-    wifiPass = bestPass;
-    wifiStatusMsg = "Connecting to " + bestSSID + "...";
-  } else {
-    wifiSSID = knownWifis.back().ssid;
-    wifiPass = knownWifis.back().pass;
-    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
-    wifiStatusMsg = "Connecting to " + wifiSSID + "...";
-  }
+  wifiSSID = knownWifis.back().ssid;
+  wifiPass = knownWifis.back().pass;
+  WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+  wifiStatusMsg = "Connecting to " + wifiSSID + "...";
 }
 
 // ---------- Web Server Endpoints ----------
@@ -1089,6 +1062,8 @@ void handleApiReboot() {
 }
 
 void getSystemStateJson(String &jsonOut) {
+  jsonOut.reserve(2048);
+
   String line0 = "";
   if (hasSelection()) {
     int selLen = selectEnd - selectStart;
@@ -1123,13 +1098,15 @@ void getSystemStateJson(String &jsonOut) {
   safeFullText.replace("\"", "\\\"");
 
   String jsonBrailleArray = "[";
-  for(int i = 0; i < fullBuffer.length(); i++) {
+  jsonBrailleArray.reserve(1024);
+  int len = fullBuffer.length();
+  for(int i = 0; i < len; i++) {
     byte b = fullBufferBraille[i];
     if (b == 0 && fullBuffer[i] != ' ') {
       b = charToBraille(fullBuffer[i]);
     }
     jsonBrailleArray += String(b);
-    if(i < fullBuffer.length() - 1) jsonBrailleArray += ",";
+    if(i < len - 1) jsonBrailleArray += ",";
   }
   jsonBrailleArray += "]";
 
@@ -1163,7 +1140,6 @@ void getSystemStateJson(String &jsonOut) {
 
 void handleApiState() {
   String json;
-  json.reserve(5000);
   getSystemStateJson(json);
   server.send(200, "application/json", json);
 }
@@ -1462,6 +1438,8 @@ void vibrate(int durationMs, int strength) {
 void smartDelay(unsigned long ms) {
   unsigned long start = millis();
   while (millis() - start < ms) {
+    dnsServer.processNextRequest();
+    server.handleClient();
     if (soundActive && millis() - soundStart >= soundDuration) {
       ledcWrite(0, 0);
       soundActive = false;

@@ -89,7 +89,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     .action-btn svg { width: 14px; height: 14px; fill: currentColor; }
 
     /* Mobile Text Highlight Buffer Box */
-    .full-text-box { background: #ffffff; border: 2px solid var(--border); border-radius: 8px; padding: 10px; min-height: 64px; max-height: 120px; overflow-y: auto; overflow-x: hidden; box-shadow: inset 0 0 4px rgba(0,0,0,0.06); display: flex; flex-wrap: wrap; align-content: flex-start; gap: 2px; user-select: none; -webkit-user-select: none; touch-action: pan-y; }
+    .full-text-box { background: #ffffff; border: 2px solid var(--border); border-radius: 8px; padding: 10px; min-height: 64px; max-height: 120px; overflow-y: auto; overflow-x: hidden; box-shadow: inset 0 0 4px rgba(0,0,0,0.06); display: flex; flex-wrap: wrap; align-content: flex-start; gap: 2px; user-select: none; -webkit-user-select: none; touch-action: none; }
     .char-pair { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; padding: 2px 4px; border-radius: 4px; user-select: none; min-width: 18px; transition: background 0.1s; position: relative; }
     .char-pair:hover { background: var(--blue-light); }
     .char-pair.selected { background: #bbdefb !important; color: #0d47a1 !important; border: 1px solid var(--blue); border-radius: 3px; }
@@ -276,7 +276,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <div class="modal-overlay" id="settings-modal" onclick="handleModalBackdropClick(event)">
   <div class="modal-content">
     <div class="modal-header">
-      <div class="modal-title">⚙️ Device & TTS Settings</div>
+      <div class="modal-title">⚙️ Device Settings</div>
       <button class="modal-close-btn" onclick="closeSettingsModal()">&times;</button>
     </div>
 
@@ -463,8 +463,65 @@ let lastEvaluatedTextLen = 0;
 let currentBrightness = 100;
 let currentVolume = 100;
 
-function openFlashcardModal(){ document.getElementById('flashcard-modal').classList.add('active'); }
+function openFlashcardModal(){ 
+  document.getElementById('flashcard-modal').classList.add('active'); 
+  lastEvaluatedTextLen = currentFullText.length;
+}
 function closeFlashcardModal(){ document.getElementById('flashcard-modal').classList.remove('active'); }
+
+function toggleFlashcardHint() {
+  fcShowHint = !fcShowHint;
+  document.getElementById('fc-hint').style.display = fcShowHint ? 'block' : 'none';
+}
+
+function nextFlashcardTarget(){
+  let nextIdx;
+  do { nextIdx = Math.floor(Math.random() * fcAlphabet.length); } while (nextIdx === fcTargetIndex);
+  fcTargetIndex = nextIdx;
+  const targetObj = fcAlphabet[fcTargetIndex];
+  document.getElementById('fc-target').innerText = targetObj.ch.toUpperCase();
+  document.getElementById('fc-hint-braille').innerText = String.fromCharCode(0x2800 + targetObj.bits);
+  const statusEl = document.getElementById('fc-status');
+  if (statusEl) {
+    statusEl.className = 'fc-status-msg';
+    statusEl.innerText = 'Set dots on keypad & press ENTER (#)';
+  }
+}
+
+function checkFlashcardAnswer(d) {
+  const modal = document.getElementById('flashcard-modal');
+  if (!modal || !modal.classList.contains('active')) {
+    lastEvaluatedTextLen = d.fullText ? d.fullText.length : 0;
+    return;
+  }
+
+  const currentLen = d.fullText ? d.fullText.length : 0;
+  if (currentLen > lastEvaluatedTextLen) {
+    const typedChar = d.fullText[d.cursor - 1] ? d.fullText[d.cursor - 1].toLowerCase() : '';
+    const targetObj = fcAlphabet[fcTargetIndex];
+    const statusEl = document.getElementById('fc-status');
+
+    if (typedChar === targetObj.ch) {
+      fcScore += 10;
+      fcStreak += 1;
+      document.getElementById('fc-score').innerText = fcScore;
+      document.getElementById('fc-streak').innerText = fcStreak;
+      statusEl.className = 'fc-status-msg correct';
+      statusEl.innerText = '✨ Correct! Excellent job!';
+      speakTextUtterance('Correct', true);
+      setTimeout(() => {
+        nextFlashcardTarget();
+      }, 800);
+    } else if (typedChar !== ' ' && typedChar !== '') {
+      fcStreak = 0;
+      document.getElementById('fc-streak').innerText = fcStreak;
+      statusEl.className = 'fc-status-msg wrong';
+      statusEl.innerText = `❌ Got '${typedChar.toUpperCase()}', expected '${targetObj.ch.toUpperCase()}'`;
+      speakTextUtterance('Try again', true);
+    }
+  }
+  lastEvaluatedTextLen = currentLen;
+}
 
 function openWifiModal(){ 
   document.getElementById('wifi-modal').classList.add('active'); 
@@ -729,9 +786,46 @@ function connectWifi(){
 }
 
 // ---------- Mobile Text Highlight & Character Selector ----------
+function updateVisualSelection(start, end) {
+  currentSelStart = start;
+  currentSelEnd = end;
+  const hasRange = start !== end && start < end;
+  const pairs = document.querySelectorAll('#full-text-box .char-pair');
+
+  pairs.forEach((pair) => {
+    const i = parseInt(pair.getAttribute('data-idx'));
+    if (hasRange && i >= start && i < end) {
+      pair.classList.add('selected');
+      pair.classList.remove('cursor-here');
+    } else if (!hasRange && i === currentCursorPos) {
+      pair.classList.remove('selected');
+      pair.classList.add('cursor-here');
+    } else {
+      pair.classList.remove('selected');
+      pair.classList.remove('cursor-here');
+    }
+  });
+
+  const toolbar = document.getElementById('selection-toolbar');
+  if (toolbar) {
+    if (hasRange) {
+      toolbar.classList.add('active');
+      document.getElementById('sel-count-label').innerText = end - start;
+    } else {
+      toolbar.classList.remove('active');
+    }
+  }
+}
+
 function renderFullText(text, pos, brailleArr, selStart, selEnd){
   currentFullText = text;
   currentCursorPos = pos;
+  
+  // Lock DOM if user is actively dragging/touching to prevent polling re-renders from killing touch focus
+  if (isSelecting) {
+    return;
+  }
+
   currentSelStart = selStart;
   currentSelEnd = selEnd;
 
@@ -742,11 +836,13 @@ function renderFullText(text, pos, brailleArr, selStart, selEnd){
   const hasRange = selStart !== selEnd && selStart < selEnd;
   const toolbar = document.getElementById('selection-toolbar');
   
-  if (hasRange) {
-    toolbar.classList.add('active');
-    document.getElementById('sel-count-label').innerText = selEnd - selStart;
-  } else {
-    toolbar.classList.remove('active');
+  if (toolbar) {
+    if (hasRange) {
+      toolbar.classList.add('active');
+      document.getElementById('sel-count-label').innerText = selEnd - selStart;
+    } else {
+      toolbar.classList.remove('active');
+    }
   }
 
   for(let i = 0; i <= len; i++){
@@ -778,7 +874,7 @@ function renderFullText(text, pos, brailleArr, selStart, selEnd){
     pairDiv.appendChild(subBraille);
 
     pairDiv.addEventListener('mousedown', (e) => { e.preventDefault(); startSelection(i); });
-    pairDiv.addEventListener('mouseenter', () => updateSelection(i));
+    pairDiv.addEventListener('mouseenter', () => { if (isSelecting) updateSelection(i); });
     
     container.appendChild(pairDiv);
   }
@@ -787,34 +883,39 @@ function renderFullText(text, pos, brailleArr, selStart, selEnd){
 function startSelection(idx) {
   isSelecting = true;
   selectionAnchor = idx;
-  setSelectionRange(idx, idx);
+  currentSelStart = idx;
+  currentSelEnd = idx;
+  currentCursorPos = idx;
+  updateVisualSelection(idx, idx);
 }
 
 function updateSelection(idx) {
-  if (!isSelecting || selectionAnchor === -1) return;
+  if (!isSelecting || selectionAnchor === -1 || idx === null) return;
   const start = Math.min(selectionAnchor, idx);
   const end = Math.max(selectionAnchor, idx);
-  setSelectionRange(start, end);
+  currentCursorPos = end;
+  updateVisualSelection(start, end);
 }
 
-function setSelectionRange(start, end) {
-  currentSelStart = start;
-  currentSelEnd = end;
-  currentCursorPos = end;
+function finishSelection(e) {
+  if (!isSelecting) return;
+  isSelecting = false;
+  selectionAnchor = -1;
 
-  if (start === end) {
-    fetch('/api/setcursor?pos=' + start).then(r => r.json()).then(d => updateState(d));
+  if (currentSelStart === currentSelEnd) {
+    fetch('/api/setcursor?pos=' + currentSelStart).then(r => r.json()).then(d => updateState(d));
   } else {
-    fetch(`/api/setcursor?start=${start}&end=${end}`).then(r => r.json()).then(d => updateState(d));
+    fetch(`/api/setcursor?start=${currentSelStart}&end=${currentSelEnd}`).then(r => r.json()).then(d => updateState(d));
   }
 }
 
-document.addEventListener('mouseup', () => { isSelecting = false; });
-document.addEventListener('touchend', () => { isSelecting = false; });
+document.addEventListener('mouseup', finishSelection);
+document.addEventListener('touchend', finishSelection);
 
 const textContainer = document.getElementById('full-text-box');
 
 function getCharIdxFromTouch(touch) {
+  if (!touch) return null;
   const target = document.elementFromPoint(touch.clientX, touch.clientY);
   if (!target) return null;
   const pair = target.closest('.char-pair');
@@ -824,11 +925,13 @@ function getCharIdxFromTouch(touch) {
 }
 
 textContainer.addEventListener('touchstart', (e) => {
+  if (e.touches.length > 1) return;
   const idx = getCharIdxFromTouch(e.touches[0]);
   if (idx !== null) {
+    if (e.cancelable) e.preventDefault();
     startSelection(idx);
   }
-}, { passive: true });
+}, { passive: false });
 
 textContainer.addEventListener('touchmove', (e) => {
   if (!isSelecting) return;
@@ -842,7 +945,7 @@ textContainer.addEventListener('touchmove', (e) => {
 function speakSelection() {
   if (currentSelStart < currentSelEnd && currentFullText) {
     const selText = currentFullText.substring(currentSelStart, currentSelEnd);
-    speakTextUtterance(selText);
+    speakTextUtterance(selText, true);
   }
 }
 
@@ -858,8 +961,9 @@ function deleteSelectionWeb() {
 }
 
 // ---------- Revamped Web Speech Synthesis (TTS Engine) ----------
-function speakTextUtterance(str) {
-  if (!str || str.trim() === '' || currentTtsMode === 0) return;
+function speakTextUtterance(str, force = false) {
+  if (!str || str.trim() === '') return;
+  if (!force && currentTtsMode === 0) return;
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     const rateVal = parseFloat(document.getElementById('speech-rate-slider').value) || 1.0;
@@ -930,7 +1034,7 @@ function speakFullTextOrSelection() {
   if (currentSelStart < currentSelEnd) {
     speakSelection();
   } else {
-    speakTextUtterance(currentFullText);
+    speakTextUtterance(currentFullText, true);
   }
 }
 
@@ -1049,8 +1153,10 @@ function updateState(d){
     }
   }
 
-  currentFullText = d.fullText;
-  currentCursorPos = d.cursor;
+  currentFullText = d.fullText || "";
+  currentCursorPos = d.cursor || 0;
+
+  checkFlashcardAnswer(d);
 }
 
 let isUpdatingOta = false;
@@ -1102,17 +1208,9 @@ async function pollState() {
   } catch (e) {
   } finally {
     isPolling = false;
-    setTimeout(pollState, 450);
+    const interval = document.hidden ? 1000 : 300;
+    setTimeout(pollState, interval);
   }
-}
-
-function nextFlashcardTarget(){
-  let nextIdx;
-  do { nextIdx = Math.floor(Math.random() * fcAlphabet.length); } while (nextIdx === fcTargetIndex);
-  fcTargetIndex = nextIdx;
-  const targetObj = fcAlphabet[fcTargetIndex];
-  document.getElementById('fc-target').innerText = targetObj.ch.toUpperCase();
-  document.getElementById('fc-hint-braille').innerText = String.fromCharCode(0x2800 + targetObj.bits);
 }
 
 nextFlashcardTarget();
