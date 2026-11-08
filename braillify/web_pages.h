@@ -3,7 +3,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>BRAILLIFY WEB CONTROLLER</title>
   <style>
     :root {
@@ -21,7 +21,12 @@ const char index_html[] PROGMEM = R"rawliteral(
       --lcd-text: #1b4332;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    html, body { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
     body { background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 15px; }
+    
+    /* Lock background scroll when any modal is active */
+    body.modal-open { overflow: hidden !important; height: 100vh; touch-action: none; }
+
     .container { width: 100%; max-width: 480px; background: var(--panel); border: 3px solid var(--border); box-shadow: 6px 6px 0px var(--border); border-radius: 12px; padding: 20px; position: relative; }
     
     .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed var(--border); padding-bottom: 12px; margin-bottom: 16px; }
@@ -43,12 +48,38 @@ const char index_html[] PROGMEM = R"rawliteral(
     .modal-title { font-size: 1.1rem; font-weight: 900; color: var(--blue); display: flex; align-items: center; gap: 6px; }
     .modal-close-btn { background: none; border: none; font-size: 1.5rem; font-weight: 900; color: var(--text); cursor: pointer; line-height: 1; padding: 0 4px; }
 
+    /* Setup Wizard Steps */
+    .wizard-progress { display: flex; justify-content: center; gap: 6px; margin-bottom: 16px; }
+    .wizard-dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border); background: #d0d7de; transition: all 0.2s; }
+    .wizard-dot.active { background: var(--orange); transform: scale(1.2); }
+    .wizard-dot.completed { background: var(--green); }
+    
+    .wizard-step { display: none; }
+    .wizard-step.active { display: block; }
+
+    .wizard-hero { text-align: center; margin-bottom: 16px; }
+    .wizard-hero-icon { font-size: 3rem; margin-bottom: 8px; }
+    .wizard-hero h2 { font-size: 1.3rem; font-weight: 900; color: var(--orange-dark); margin-bottom: 6px; }
+    .wizard-hero p { font-size: 0.85rem; color: #57606a; line-height: 1.4; font-weight: 600; }
+
+    .wizard-nav { display: flex; justify-content: space-between; gap: 10px; margin-top: 20px; border-top: 2px dashed var(--border); padding-top: 14px; }
+    .wizard-btn { flex: 1; padding: 10px; border: 2px solid var(--border); border-radius: 8px; font-weight: 800; font-size: 0.85rem; cursor: pointer; box-shadow: 2px 2px 0px var(--border); transition: all 0.05s; text-align: center; }
+    .wizard-btn:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
+    .wizard-btn.primary { background: #e8f5e9; color: #2e7d32; }
+    .wizard-btn.secondary { background: var(--bg); color: var(--text); }
+
+    /* Key Quickstart Guide */
+    .key-guide-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 10px; }
+    .key-guide-item { background: var(--bg); border: 2px solid var(--border); border-radius: 8px; padding: 8px; display: flex; align-items: center; gap: 8px; font-size: 0.78rem; font-weight: 700; }
+    .key-guide-badge { background: var(--orange); color: white; padding: 4px 8px; border-radius: 6px; font-weight: 900; font-family: 'Courier New', monospace; }
+
     /* Flashcard Modal Elements */
     .fc-scores { display: flex; gap: 10px; font-size: 0.8rem; font-weight: 800; font-family: 'Courier New', monospace; margin-bottom: 14px; justify-content: center; }
     .fc-score-badge { background: var(--blue-light); border: 2px solid var(--border); padding: 4px 10px; border-radius: 6px; }
-    .fc-card-display { display: flex; flex-direction: column; align-items: center; background: var(--bg); border: 2px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+    .fc-card-display { display: flex; flex-direction: column; align-items: center; background: var(--bg); border: 2px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 14px; text-align: center; }
     .fc-target-label { font-size: 0.75rem; font-weight: 800; color: #57606a; margin-bottom: 4px; }
     .fc-target-char { font-size: 3.5rem; font-weight: 900; color: var(--orange-dark); font-family: 'Courier New', monospace; line-height: 1; }
+    .fc-trigger-info { font-size: 0.78rem; font-weight: 800; color: var(--blue); margin-top: 6px; background: #ffffff; padding: 4px 8px; border: 1.5px solid var(--border); border-radius: 6px; display: inline-block; }
     .fc-hint-box { margin-top: 8px; font-size: 0.9rem; font-weight: bold; color: var(--text); display: none; }
     .fc-hint-braille { font-size: 2rem; line-height: 1; color: var(--blue); vertical-align: middle; }
     .fc-status-msg { font-size: 0.95rem; font-weight: 900; text-align: center; min-height: 1.4em; margin-bottom: 14px; }
@@ -174,7 +205,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <span><span id="sel-count-label">0</span> chars selected</span>
       <div style="display:flex; gap:6px;">
         <button class="action-btn" onclick="speakSelection()">🗣️ Speak</button>
-        <button class="action-btn" onclick="copySelection()">📋 Copy</button>
+        <button class="action-btn" id="sel-copy-btn" onclick="copySelection()">📋 Copy</button>
         <button class="action-btn" style="background:#ffebee; color:#c62828;" onclick="deleteSelectionWeb()">🗑️ Del</button>
       </div>
     </div>
@@ -272,6 +303,122 @@ const char index_html[] PROGMEM = R"rawliteral(
 
 </div>
 
+<!-- FIRST TIME SETUP WIZARD MODAL -->
+<div class="modal-overlay" id="wizard-modal">
+  <div class="modal-content" style="max-width: 440px;">
+    <div class="wizard-progress">
+      <div class="wizard-dot active" id="wdot-1"></div>
+      <div class="wizard-dot" id="wdot-2"></div>
+      <div class="wizard-dot" id="wdot-3"></div>
+      <div class="wizard-dot" id="wdot-4"></div>
+      <div class="wizard-dot" id="wdot-5"></div>
+    </div>
+
+    <!-- Step 1: Welcome -->
+    <div class="wizard-step active" id="wstep-1">
+      <div class="wizard-hero">
+        <div class="wizard-hero-icon">⠃⠗⠁⠊⠇⠇⠊⠋⠽</div>
+        <h2>Welcome to Braillify!</h2>
+        <p>Your hardware tactile Braille translator is ready. Let's customize your audio, screen brightness, and Wi-Fi preferences in a few quick steps.</p>
+      </div>
+      <div class="wizard-nav">
+        <div></div>
+        <button class="wizard-btn primary" onclick="nextWizardStep(2)">Get Started →</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Audio & Accessibility -->
+    <div class="wizard-step" id="wstep-2">
+      <div class="modal-header">
+        <div class="modal-title">🔊 Audio & Accessibility</div>
+      </div>
+      <div class="setting-group">
+        <div class="setting-header"><span>🗣️ TTS Speech Mode</span></div>
+        <select id="w-tts-mode-select" class="setting-select" onchange="setTtsMode(this.value)">
+          <option value="1">Mode 1: Speak Char + Full Word on Space</option>
+          <option value="2">Mode 2: Speak Full Word Only (after space)</option>
+          <option value="3">Mode 3: Speak Full Buffer Line</option>
+          <option value="0">Mode 0: Web Speech TTS Disabled</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <div class="setting-header"><span>🔊 Buzzer Volume</span><span id="w-vol-label">100%</span></div>
+        <input type="range" id="w-vol-slider" min="0" max="100" value="100" class="setting-slider" onchange="setVolume(this.value)" oninput="document.getElementById('w-vol-label').innerText = (this.value > 0 ? this.value + '%' : 'MUTED')">
+      </div>
+      <div class="wizard-nav">
+        <button class="wizard-btn secondary" onclick="prevWizardStep(1)">← Back</button>
+        <button class="wizard-btn primary" onclick="nextWizardStep(3)">Next: Display →</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Screen & Brightness -->
+    <div class="wizard-step" id="wstep-3">
+      <div class="modal-header">
+        <div class="modal-title">☀️ Screen & Display</div>
+      </div>
+      <div class="setting-group" style="margin-bottom: 24px;">
+        <div class="setting-header"><span>LCD Backlight Brightness</span><span id="w-bright-label">100%</span></div>
+        <input type="range" id="w-bright-slider" min="0" max="100" value="100" class="setting-slider" onchange="setBrightness(this.value)" oninput="document.getElementById('w-bright-label').innerText=this.value+'%'">
+      </div>
+      <div class="wizard-hero">
+        <p>💡 Tip: You can adjust brightness and sleep states anytime in Device Settings.</p>
+      </div>
+      <div class="wizard-nav">
+        <button class="wizard-btn secondary" onclick="prevWizardStep(2)">← Back</button>
+        <button class="wizard-btn primary" onclick="nextWizardStep(4)">Next: Wi-Fi →</button>
+      </div>
+    </div>
+
+    <!-- Step 4: Wi-Fi Setup -->
+    <div class="wizard-step" id="wstep-4">
+      <div class="modal-header">
+        <div class="modal-title">📶 Connect Wi-Fi</div>
+      </div>
+      <p style="font-size:0.8rem; color:#57606a; margin-bottom:10px; font-weight:600;">Connecting Braillify to your network enables Cloud OCR scanning and GitHub wireless firmware updates.</p>
+      <div class="fc-actions" style="margin-bottom:10px;">
+        <button class="fc-btn" onclick="scanWifiNetworks()">🔍 Scan Wi-Fi Networks</button>
+      </div>
+
+      <!-- ADD THIS LIST CONTAINER FOR SCAN RESULTS -->
+      <div class="wifi-list" id="w-wifi-list" style="max-height: 120px; margin-bottom: 12px;">
+        <div class="wifi-item" style="justify-content:center;color:#57606a;">Click Scan to search networks</div>
+      </div>
+
+      <div class="wifi-input-group">
+        <input type="text" id="w-wifi-ssid" class="wifi-input" placeholder="Wi-Fi Network SSID">
+        <input type="password" id="w-wifi-pass" class="wifi-input" placeholder="Wi-Fi Password">
+      </div>
+      <div class="fc-actions">
+        <button class="fc-btn" style="background:#e8f5e9;color:#2e7d32;" onclick="connectWifiFromWizard()">Connect Network</button>
+      </div>
+      <div class="wizard-nav">
+        <button class="wizard-btn secondary" onclick="prevWizardStep(3)">← Back</button>
+        <button class="wizard-btn primary" onclick="nextWizardStep(5)">Next: Overview →</button>
+      </div>
+    </div>
+
+    <!-- Step 5: Quickstart & Finish -->
+    <div class="wizard-step" id="wstep-5">
+      <div class="modal-header">
+        <div class="modal-title">✨ Keypad Quick Guide</div>
+      </div>
+      <div class="key-guide-grid">
+        <div class="key-guide-item"><span class="key-guide-badge">#</span> Confirm Cell</div>
+        <div class="key-guide-item"><span class="key-guide-badge">0</span> Space Character</div>
+        <div class="key-guide-item"><span class="key-guide-badge">*</span> Switch Mode</div>
+        <div class="key-guide-item"><span class="key-guide-badge">1</span> Camera OCR</div>
+        <div class="key-guide-item"><span class="key-guide-badge">A</span> Save to Memory</div>
+        <div class="key-guide-item"><span class="key-guide-badge">B</span> Load Memory</div>
+      </div>
+      <div class="wizard-nav">
+        <button class="wizard-btn secondary" onclick="prevWizardStep(4)">← Back</button>
+        <button class="wizard-btn primary" onclick="finishWizardSetup()">🚀 Complete Setup</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <!-- Device Settings Modal -->
 <div class="modal-overlay" id="settings-modal" onclick="handleModalBackdropClick(event)">
   <div class="modal-content">
@@ -320,6 +467,13 @@ const char index_html[] PROGMEM = R"rawliteral(
       <input type="range" id="volume-slider" min="0" max="100" value="100" class="setting-slider" onchange="setVolume(this.value)" oninput="document.getElementById('volume-val-label').innerText = (this.value > 0 ? this.value + '%' : 'MUTED (0%)')">
     </div>
 
+    <!-- Re-run Wizard Button -->
+    <div class="setting-group" style="margin-bottom: 16px;">
+      <button onclick="closeSettingsModal(); openWizardModal();" class="btn-update" style="background: var(--blue-light); color: var(--blue);">
+        🪄 Re-run Setup Wizard
+      </button>
+    </div>
+
     <!-- Firmware OTA Section -->
     <div class="ota-section" style="border-top: 2px dashed var(--border); padding-top: 14px;">
       <div class="section-title" style="margin-bottom: 8px;">Firmware Update</div>
@@ -360,7 +514,8 @@ const char index_html[] PROGMEM = R"rawliteral(
     <div class="fc-card-display">
       <div class="fc-target-label">TYPE THIS CHARACTER</div>
       <div class="fc-target-char" id="fc-target">A</div>
-      <div class="fc-hint-box" id="fc-hint">Hint: <span class="fc-hint-braille" id="fc-hint-braille">⠁</span></div>
+      <div class="fc-trigger-info" id="fc-trigger-info">AUTO Mode Trigger: Dot 6 (⠠)</div>
+      <div class="fc-hint-box" id="fc-hint">Hint: <span class="fc-hint-braille" id="fc-hint-braille">⠠⠁</span></div>
     </div>
     <div class="fc-status-msg" id="fc-status">Set dots on keypad & press ENTER (#)</div>
     <div class="fc-actions">
@@ -443,16 +598,49 @@ let selectionAnchor = -1;
 let lastSpokenText = "";
 let lastSpokenCursor = 0;
 let isFirstStateUpdate = true;
+let hasSetupWizardPrompted = false;
 
 let holdTimer = null;
 let repeatInterval = null;
 
-const fcAlphabet = [
+// Extended Flashcard Dataset (Lowercase, Uppercase, Numbers, Special Characters)
+const fcDataset = [
+  // Lowercase Letters
   {ch:'a', bits:1},  {ch:'b', bits:3},  {ch:'c', bits:9},  {ch:'d', bits:25}, {ch:'e', bits:17},
   {ch:'f', bits:11}, {ch:'g', bits:27}, {ch:'h', bits:19}, {ch:'i', bits:10}, {ch:'j', bits:26},
   {ch:'k', bits:5},  {ch:'l', bits:7},  {ch:'m', bits:13}, {ch:'n', bits:29}, {ch:'o', bits:21},
   {ch:'p', bits:15}, {ch:'q', bits:31}, {ch:'r', bits:23}, {ch:'s', bits:14}, {ch:'t', bits:30},
-  {ch:'u', bits:37}, {ch:'v', bits:39}, {ch:'w', bits:58}, {ch:'x', bits:45}, {ch:'y', bits:61}, {ch:'z', bits:53}
+  {ch:'u', bits:37}, {ch:'v', bits:39}, {ch:'w', bits:58}, {ch:'x', bits:45}, {ch:'y', bits:61}, {ch:'z', bits:53},
+
+  // Uppercase Letters
+  {ch:'A', bits:1,  prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'B', bits:3,  prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'C', bits:9,  prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'D', bits:25, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'E', bits:17, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'F', bits:11, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'G', bits:27, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'H', bits:19, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'I', bits:10, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'J', bits:26, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'K', bits:5,  prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'L', bits:7,  prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'M', bits:13, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'N', bits:29, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'O', bits:21, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'P', bits:15, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'Q', bits:31, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'R', bits:23, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'S', bits:14, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'T', bits:30, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'U', bits:37, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'V', bits:39, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'W', bits:58, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'X', bits:45, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+  {ch:'Y', bits:61, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'Z', bits:53, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+
+  // Numbers
+  {ch:'1', bits:1,  prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'2', bits:3,  prefixBits:60, prefixName:'Num Ind # (⠼)'},
+  {ch:'3', bits:9,  prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'4', bits:25, prefixBits:60, prefixName:'Num Ind # (⠼)'},
+  {ch:'5', bits:17, prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'6', bits:11, prefixBits:60, prefixName:'Num Ind # (⠼)'},
+  {ch:'7', bits:27, prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'8', bits:19, prefixBits:60, prefixName:'Num Ind # (⠼)'},
+  {ch:'9', bits:10, prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'0', bits:26, prefixBits:60, prefixName:'Num Ind # (⠼)'},
+
+  // Special Characters
+  {ch:'?', bits:38, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:'!', bits:22, prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
+  {ch:'&', bits:47, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:',', bits:2,  prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
+  {ch:'.', bits:50, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:';', bits:6,  prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
+  {ch:':', bits:18, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:'@', bits:44, prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
+  {ch:'*', bits:20, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:'/', bits:12, prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
+  {ch:'\'', bits:4, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}
 ];
 
 let fcTargetIndex = 0;
@@ -463,11 +651,87 @@ let lastEvaluatedTextLen = 0;
 let currentBrightness = 100;
 let currentVolume = 100;
 
+(function breakoutCaptivePortal() {
+  const ua = navigator.userAgent || '';
+  const isAndroid = /Android/i.test(ua);
+  const isWebView = /wv|Android.*Version\/[0-9]\.[0-9]|FBAN|FBAV/i.test(ua);
+
+  if (isAndroid && (isWebView || !window.speechSynthesis)) {
+    const targetUrl = window.location.host || '192.168.4.1';
+    window.location.href = 'intent://' + targetUrl + '/#Intent;scheme=http;action=android.intent.action.VIEW;end;';
+  }
+})();
+
+function updateBodyScrollLock() {
+  const anyModalActive = document.querySelector('.modal-overlay.active');
+  if (anyModalActive) {
+    document.body.classList.add('modal-open');
+  } else {
+    document.body.classList.remove('modal-open');
+  }
+}
+
+// Wizard Functions
+function openWizardModal() {
+  nextWizardStep(1);
+  document.getElementById('wizard-modal').classList.add('active');
+  updateBodyScrollLock();
+}
+
+function closeWizardModal() {
+  document.getElementById('wizard-modal').classList.remove('active');
+  updateBodyScrollLock();
+}
+
+function nextWizardStep(stepNum) {
+  for (let i = 1; i <= 5; i++) {
+    const stepEl = document.getElementById('wstep-' + i);
+    const dotEl = document.getElementById('wdot-' + i);
+    if (stepEl) stepEl.classList.remove('active');
+    if (dotEl) {
+      dotEl.classList.remove('active');
+      if (i < stepNum) dotEl.classList.add('completed');
+    }
+  }
+  const targetStep = document.getElementById('wstep-' + stepNum);
+  const targetDot = document.getElementById('wdot-' + stepNum);
+  if (targetStep) targetStep.classList.add('active');
+  if (targetDot) targetDot.classList.add('active');
+}
+
+function prevWizardStep(stepNum) {
+  nextWizardStep(stepNum);
+}
+
+function connectWifiFromWizard() {
+  const ssid = document.getElementById('w-wifi-ssid').value;
+  const pass = document.getElementById('w-wifi-pass').value;
+  if(!ssid){ alert('Please enter a Wi-Fi SSID'); return; }
+
+  fetch(`/api/connect?ssid=${encodeURIComponent(ssid)}&pass=${encodeURIComponent(pass)}`)
+    .then(r => r.json())
+    .then(d => { alert(d.status || 'Connecting Wi-Fi...'); });
+}
+
+function finishWizardSetup() {
+  fetch('/api/finish_setup')
+    .then(r => r.json())
+    .then(() => {
+      closeWizardModal();
+      speakTextUtterance('Braillify Setup Complete!', true);
+    })
+    .catch(() => closeWizardModal());
+}
+
 function openFlashcardModal(){ 
   document.getElementById('flashcard-modal').classList.add('active'); 
+  updateBodyScrollLock();
   lastEvaluatedTextLen = currentFullText.length;
 }
-function closeFlashcardModal(){ document.getElementById('flashcard-modal').classList.remove('active'); }
+function closeFlashcardModal(){ 
+  document.getElementById('flashcard-modal').classList.remove('active'); 
+  updateBodyScrollLock();
+}
 
 function toggleFlashcardHint() {
   fcShowHint = !fcShowHint;
@@ -476,11 +740,27 @@ function toggleFlashcardHint() {
 
 function nextFlashcardTarget(){
   let nextIdx;
-  do { nextIdx = Math.floor(Math.random() * fcAlphabet.length); } while (nextIdx === fcTargetIndex);
+  do { nextIdx = Math.floor(Math.random() * fcDataset.length); } while (nextIdx === fcTargetIndex);
   fcTargetIndex = nextIdx;
-  const targetObj = fcAlphabet[fcTargetIndex];
-  document.getElementById('fc-target').innerText = targetObj.ch.toUpperCase();
-  document.getElementById('fc-hint-braille').innerText = String.fromCharCode(0x2800 + targetObj.bits);
+  const targetObj = fcDataset[fcTargetIndex];
+  
+  document.getElementById('fc-target').innerText = targetObj.ch;
+  
+  const triggerEl = document.getElementById('fc-trigger-info');
+  if (targetObj.prefixName) {
+    triggerEl.style.display = 'inline-block';
+    triggerEl.innerText = `AUTO Mode Trigger: ${targetObj.prefixName}`;
+  } else {
+    triggerEl.style.display = 'none';
+  }
+
+  let hintBraille = "";
+  if (targetObj.prefixBits) {
+    hintBraille += String.fromCharCode(0x2800 + targetObj.prefixBits);
+  }
+  hintBraille += String.fromCharCode(0x2800 + targetObj.bits);
+  document.getElementById('fc-hint-braille').innerText = hintBraille;
+
   const statusEl = document.getElementById('fc-status');
   if (statusEl) {
     statusEl.className = 'fc-status-msg';
@@ -497,8 +777,8 @@ function checkFlashcardAnswer(d) {
 
   const currentLen = d.fullText ? d.fullText.length : 0;
   if (currentLen > lastEvaluatedTextLen) {
-    const typedChar = d.fullText[d.cursor - 1] ? d.fullText[d.cursor - 1].toLowerCase() : '';
-    const targetObj = fcAlphabet[fcTargetIndex];
+    const typedChar = d.fullText[d.cursor - 1] ? d.fullText[d.cursor - 1] : '';
+    const targetObj = fcDataset[fcTargetIndex];
     const statusEl = document.getElementById('fc-status');
 
     if (typedChar === targetObj.ch) {
@@ -516,7 +796,7 @@ function checkFlashcardAnswer(d) {
       fcStreak = 0;
       document.getElementById('fc-streak').innerText = fcStreak;
       statusEl.className = 'fc-status-msg wrong';
-      statusEl.innerText = `❌ Got '${typedChar.toUpperCase()}', expected '${targetObj.ch.toUpperCase()}'`;
+      statusEl.innerText = `❌ Got '${typedChar}', expected '${targetObj.ch}'`;
       speakTextUtterance('Try again', true);
     }
   }
@@ -525,6 +805,7 @@ function checkFlashcardAnswer(d) {
 
 function openWifiModal(){ 
   document.getElementById('wifi-modal').classList.add('active'); 
+  updateBodyScrollLock();
   loadSavedWifis();
   scanWifiNetworks();
 }
@@ -578,7 +859,10 @@ function forgetWifi(ssid) {
   }
 }
 
-function closeWifiModal(){ document.getElementById('wifi-modal').classList.remove('active'); }
+function closeWifiModal(){ 
+  document.getElementById('wifi-modal').classList.remove('active'); 
+  updateBodyScrollLock();
+}
 
 let currentFeedbackMode = 0;
 
@@ -592,8 +876,13 @@ function openSettingsModal(){
   
   document.getElementById('tts-mode-select').value = currentTtsMode;
   document.getElementById('settings-modal').classList.add('active'); 
+  updateBodyScrollLock();
 }
-function closeSettingsModal(){ document.getElementById('settings-modal').classList.remove('active'); }
+
+function closeSettingsModal(){ 
+  document.getElementById('settings-modal').classList.remove('active'); 
+  updateBodyScrollLock();
+}
 
 function setBrightness(val) {
   currentBrightness = parseInt(val);
@@ -619,12 +908,14 @@ function setTtsMode(val) {
 let cameraStream = null;
 function openCameraModal(){
   document.getElementById('camera-modal').classList.add('active');
+  updateBodyScrollLock();
   startCameraStream();
 }
 
 function closeCameraModal(){
   stopCameraStream();
   document.getElementById('camera-modal').classList.remove('active');
+  updateBodyScrollLock();
 }
 
 function startCameraStream(){
@@ -753,22 +1044,43 @@ function handleModalBackdropClick(e){
 
 function scanWifiNetworks(){
   const listEl = document.getElementById('wifi-list');
-  listEl.innerHTML = '<div class="wifi-item" style="justify-content:center;">Scanning networks...</div>';
+  const wizardListEl = document.getElementById('w-wifi-list');
+
+  const loadingHtml = '<div class="wifi-item" style="justify-content:center;">Scanning networks...</div>';
+  if (listEl) listEl.innerHTML = loadingHtml;
+  if (wizardListEl) wizardListEl.innerHTML = loadingHtml;
+
   fetch('/api/scan')
     .then(r => r.json())
     .then(networks => {
-      listEl.innerHTML = '';
-      if(networks.length === 0){
-        listEl.innerHTML = '<div class="wifi-item" style="justify-content:center;">No networks found</div>';
-        return;
-      }
-      networks.forEach(net => {
-        const item = document.createElement('div');
-        item.className = 'wifi-item';
-        item.innerHTML = `<span>${net.ssid}</span><span class="wifi-rssi">${net.rssi} dBm</span>`;
-        item.onclick = () => { document.getElementById('wifi-ssid').value = net.ssid; };
-        listEl.appendChild(item);
-      });
+      const render = (target) => {
+        if (!target) return;
+        target.innerHTML = '';
+        if (!networks || networks.length === 0) {
+          target.innerHTML = '<div class="wifi-item" style="justify-content:center;">No networks found</div>';
+          return;
+        }
+        networks.forEach(net => {
+          const item = document.createElement('div');
+          item.className = 'wifi-item';
+          item.innerHTML = `<span>${net.ssid}</span><span class="wifi-rssi">${net.rssi} dBm</span>`;
+          item.onclick = () => { 
+            const mainInput = document.getElementById('wifi-ssid');
+            const wizardInput = document.getElementById('w-wifi-ssid');
+            if (mainInput) mainInput.value = net.ssid;
+            if (wizardInput) wizardInput.value = net.ssid;
+          };
+          target.appendChild(item);
+        });
+      };
+
+      render(listEl);
+      render(wizardListEl);
+    })
+    .catch(() => {
+      const errHtml = '<div class="wifi-item" style="justify-content:center;color:red;">Scan failed</div>';
+      if (listEl) listEl.innerHTML = errHtml;
+      if (wizardListEl) wizardListEl.innerHTML = errHtml;
     });
 }
 
@@ -821,7 +1133,6 @@ function renderFullText(text, pos, brailleArr, selStart, selEnd){
   currentFullText = text;
   currentCursorPos = pos;
   
-  // Lock DOM if user is actively dragging/touching to prevent polling re-renders from killing touch focus
   if (isSelecting) {
     return;
   }
@@ -942,34 +1253,94 @@ textContainer.addEventListener('touchmove', (e) => {
   }
 }, { passive: false });
 
-function speakSelection() {
-  if (currentSelStart < currentSelEnd && currentFullText) {
-    const selText = currentFullText.substring(currentSelStart, currentSelEnd);
-    speakTextUtterance(selText, true);
+// Universal Clipboard Copy Helper
+function fallbackCopyText(text, successCallback) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '0';
+  ta.style.width = '2em';
+  ta.style.height = '2em';
+  ta.style.padding = '0';
+  ta.style.border = 'none';
+  ta.style.outline = 'none';
+  ta.style.boxShadow = 'none';
+  ta.style.background = 'transparent';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try {
+    const successful = document.execCommand('copy');
+    if (successful && successCallback) successCallback();
+  } catch (err) {
+    console.error('Fallback copy error:', err);
+  }
+  document.body.removeChild(ta);
+}
+
+let currentUtterance = null;
+let ttsUnlocked = false;
+
+function unlockTts() {
+  if (!('speechSynthesis' in window)) return;
+  try {
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+    window.speechSynthesis.getVoices();
+    if (!ttsUnlocked) {
+      const dummy = new SpeechSynthesisUtterance(' ');
+      dummy.volume = 0.01;
+      window.speechSynthesis.speak(dummy);
+      ttsUnlocked = true;
+    }
+  } catch (e) {
+    console.error('[TTS Unlock Warning]', e);
   }
 }
 
-function copySelection() {
-  if (currentSelStart < currentSelEnd && currentFullText) {
-    const selText = currentFullText.substring(currentSelStart, currentSelEnd);
-    navigator.clipboard.writeText(selText);
-  }
+document.addEventListener('click', unlockTts);
+document.addEventListener('touchstart', unlockTts);
+
+if ('speechSynthesis' in window) {
+  window.speechSynthesis.onvoiceschanged = () => {
+    try { window.speechSynthesis.getVoices(); } catch(e){}
+  };
 }
 
-function deleteSelectionWeb() {
-  sendKey('D');
-}
-
-// ---------- Revamped Web Speech Synthesis (TTS Engine) ----------
 function speakTextUtterance(str, force = false) {
   if (!str || str.trim() === '') return;
   if (!force && currentTtsMode === 0) return;
+
   if ('speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
-    const rateVal = parseFloat(document.getElementById('speech-rate-slider').value) || 1.0;
-    const utterance = new SpeechSynthesisUtterance(str);
-    utterance.rate = rateVal;
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.cancel();
+      
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+
+      const rateVal = parseFloat(document.getElementById('speech-rate-slider').value) || 1.0;
+      currentUtterance = new SpeechSynthesisUtterance(str);
+      currentUtterance.rate = rateVal;
+
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        const prefVoice = voices.find(v => v.lang && v.lang.startsWith('en')) || voices[0];
+        if (prefVoice) currentUtterance.voice = prefVoice;
+      }
+
+      currentUtterance.onerror = function(e) {
+        console.error('[TTS Speech Error]', e);
+      };
+
+      window.speechSynthesis.speak(currentUtterance);
+    } catch (err) {
+      console.error('[TTS Exception]', err);
+    }
+  } else {
+    alert('Web Speech TTS is not supported in this captive browser popup. Please open in Chrome or Safari at http://192.168.4.1');
   }
 }
 
@@ -1030,6 +1401,15 @@ function handleLiveTtsFeedback(d) {
   lastSpokenCursor = newPos;
 }
 
+function speakSelection() {
+  const start = Math.min(currentSelStart, currentSelEnd);
+  const end = Math.max(currentSelStart, currentSelEnd);
+  if (start < end && currentFullText) {
+    const selText = currentFullText.substring(start, end);
+    speakTextUtterance(selText, true);
+  }
+}
+
 function speakFullTextOrSelection() {
   if (currentSelStart < currentSelEnd) {
     speakSelection();
@@ -1038,15 +1418,41 @@ function speakFullTextOrSelection() {
   }
 }
 
+function copySelection() {
+  const start = Math.min(currentSelStart, currentSelEnd);
+  const end = Math.max(currentSelStart, currentSelEnd);
+
+  if (start < end && currentFullText) {
+    const selText = currentFullText.substring(start, end);
+    const selCopyBtn = document.getElementById('sel-copy-btn');
+
+    const flashSelCopyStatus = () => {
+      if (selCopyBtn) {
+        selCopyBtn.innerText = 'Copied!';
+        setTimeout(() => selCopyBtn.innerText = '📋 Copy', 1500);
+      }
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(selText)
+        .then(flashSelCopyStatus)
+        .catch(() => fallbackCopyText(selText, flashSelCopyStatus));
+    } else {
+      fallbackCopyText(selText, flashSelCopyStatus);
+    }
+  }
+}
+
 function copyFullText(){
   const text = currentFullText;
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(text).then(() => flashCopyStatus());
+  if (!text) return;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => flashCopyStatus())
+      .catch(() => fallbackCopyText(text, flashCopyStatus));
   } else {
-    const ta = document.createElement('textarea');
-    ta.value = text; document.body.appendChild(ta); ta.select();
-    document.execCommand('copy'); document.body.removeChild(ta);
-    flashCopyStatus();
+    fallbackCopyText(text, flashCopyStatus);
   }
 }
 
@@ -1054,6 +1460,10 @@ function flashCopyStatus(){
   const label = document.getElementById('copy-btn-text');
   label.innerText = 'Copied!';
   setTimeout(() => label.innerText = 'Copy Text', 1500);
+}
+
+function deleteSelectionWeb() {
+  sendKey('D');
 }
 
 function setCursorPos(idx){ fetch('/api/setcursor?pos=' + idx).then(r => r.json()).then(d => updateState(d)); }
@@ -1107,6 +1517,12 @@ function updateState(d){
     isFirstStateUpdate = false;
   } else {
     handleLiveTtsFeedback(d);
+  }
+
+  // First Time Setup Auto Trigger
+  if (d.setupDone === false && !hasSetupWizardPrompted) {
+    hasSetupWizardPrompted = true;
+    openWizardModal();
   }
 
   currentBits = d.bits;

@@ -14,16 +14,17 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.5.1"
+#define FIRMWARE_VERSION "1.0.5.2"
 
 Preferences prefs;
 uint32_t bootId = 0;
+bool isSetupDone = false;
 
 // LCD setup (I2C)
 #define I2C_ADDR 0x27  
 LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 
-#define LCD_BACKLIGHT_PIN 18 // PWM Backlight Control Pin (Optional Header Hookup)
+#define LCD_BACKLIGHT_PIN 18 // PWM Backlight Control Pin
 int lcdBrightness = 100;     // 0 - 100%
 int soundVolume = 100;       // 0 - 100%
 int ttsMode = 1;             // 0: OFF, 1: CHAR_AND_WORD, 2: WORD_ONLY, 3: FULL_TEXT
@@ -32,6 +33,12 @@ int ttsMode = 1;             // 0: OFF, 1: CHAR_AND_WORD, 2: WORD_ONLY, 3: FULL_
 WebServer server(80);
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
+const IPAddress apIP(192, 168, 4, 1);
+
+// Connection State Management
+bool isConnecting = false;
+unsigned long wifiConnectStart = 0;
+const unsigned long WIFI_TIMEOUT_MS = 12000;
 
 // Wi-Fi Configuration State
 String wifiSSID = "";
@@ -156,6 +163,8 @@ void triggerScanNotice();
 void updateFirmwareFromGitHub(const String& binUrl);
 void applyBrightness(int percent);
 byte charToBraille(char c);
+void handleCaptivePortal();
+void checkWifiStatus();
 
 // Text Selection Helpers
 bool hasSelection() {
@@ -878,22 +887,53 @@ void forgetWifi(String ssid) {
   saveKnownWifis();
 }
 
+void startWifiConnection(const String& ssid, const String& pass) {
+  wifiSSID = ssid;
+  wifiPass = pass;
+  
+  WiFi.disconnect(false);
+  delay(100);
+
+  WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+  wifiStatusMsg = "Connecting to " + wifiSSID + "...";
+  wifiConnectStart = millis();
+  isConnecting = true;
+}
+
 void autoConnectWifi() {
   loadKnownWifis();
   if (knownWifis.empty()) {
     wifiStatusMsg = "AP Mode Active (192.168.4.1)";
     return;
   }
-
-  wifiSSID = knownWifis.back().ssid;
-  wifiPass = knownWifis.back().pass;
-  WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
-  wifiStatusMsg = "Connecting to " + wifiSSID + "...";
+  startWifiConnection(knownWifis.back().ssid, knownWifis.back().pass);
 }
 
-// ---------- Web Server Endpoints ----------
-void handleRoot() {
-  server.send(200, "text/html", index_html);
+void checkWifiStatus() {
+  if (!isConnecting) return;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    isConnecting = false;
+    wifiStatusMsg = "Connected to: " + WiFi.SSID();
+  } 
+  else if (WiFi.status() == WL_CONNECT_FAILED || 
+           WiFi.status() == WL_NO_SSID_AVAIL || 
+           (millis() - wifiConnectStart >= WIFI_TIMEOUT_MS)) {
+    isConnecting = false;
+    WiFi.disconnect(false);
+    wifiStatusMsg = "Failed to connect to " + wifiSSID;
+  }
+}
+
+// ---------- Captive Portal & Web Server Endpoints ----------
+void handleCaptivePortal() {
+  String host = server.hostHeader();
+  if (host == "192.168.4.1" || host == "braillify.local" || host.indexOf("192.168.4.1") >= 0) {
+    server.send_P(200, "text/html", index_html);
+  } else {
+    server.sendHeader("Location", "http://192.168.4.1/", true);
+    server.send(302, "text/plain", "");
+  }
 }
 
 void handleApiSavedWifis() {
@@ -916,8 +956,19 @@ void handleApiForgetWifi() {
     
     forgetWifi(targetSSID);
 
-    if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == targetSSID) {
-      WiFi.disconnect(false, true);
+    if (WiFi.SSID() == targetSSID || wifiSSID == targetSSID || WiFi.status() == WL_CONNECTED) {
+      isConnecting = false;
+      wifiSSID = "";
+      wifiPass = "";
+      
+      WiFi.setAutoReconnect(false);
+      WiFi.disconnect(true, true); 
+      delay(100);
+      
+      WiFi.mode(WIFI_AP_STA);
+      WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+      WiFi.softAP("Braillify", "");
+      
       wifiStatusMsg = "AP Mode Active (192.168.4.1)";
     }
 
@@ -929,13 +980,10 @@ void handleApiForgetWifi() {
 
 void handleApiConnect() {
   if (server.hasArg("ssid")) {
-    wifiSSID = server.arg("ssid");
-    wifiPass = server.hasArg("pass") ? server.arg("pass") : "";
-
-    addOrUpdateWifi(wifiSSID, wifiPass);
-
-    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
-    wifiStatusMsg = "Connecting to " + wifiSSID + "...";
+    String ssid = server.arg("ssid");
+    String pass = server.hasArg("pass") ? server.arg("pass") : "";
+    addOrUpdateWifi(ssid, pass);
+    startWifiConnection(ssid, pass);
   }
 
   String json = "{\"status\":\"" + wifiStatusMsg + "\"}";
@@ -943,17 +991,35 @@ void handleApiConnect() {
 }
 
 void handleApiScan() {
-  int n = WiFi.scanNetworks();
+  if (isConnecting || WiFi.status() != WL_CONNECTED) {
+    WiFi.disconnect(false);
+    delay(100);
+  }
+
+  int n = WiFi.scanNetworks(false, true);
+  
   String json = "[";
-  for (int i = 0; i < n; ++i) {
-    json += "{";
-    json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
-    json += "\"rssi\":" + String(WiFi.RSSI(i));
-    json += "}";
-    if (i < n - 1) json += ",";
+  if (n > 0) {
+    for (int i = 0; i < n; ++i) {
+      json += "{";
+      json += "\"ssid\":\"" + escapeJsonString(WiFi.SSID(i)) + "\",";
+      json += "\"rssi\":" + String(WiFi.RSSI(i));
+      json += "}";
+      if (i < n - 1) json += ",";
+    }
   }
   json += "]";
+
+  WiFi.scanDelete();
   server.send(200, "application/json", json);
+}
+
+void handleApiFinishSetup() {
+  prefs.begin("settings", false);
+  isSetupDone = true;
+  prefs.putBool("setupDone", true);
+  prefs.end();
+  server.send(200, "application/json", "{\"status\":\"Setup completed!\"}");
 }
 
 void handleApiSetText() {
@@ -1120,6 +1186,7 @@ void getSystemStateJson(String &jsonOut) {
 
   jsonOut = "{";
   jsonOut += "\"bootId\":" + String(bootId) + ",";
+  jsonOut += "\"setupDone\":" + String(isSetupDone ? "true" : "false") + ",";
   jsonOut += "\"bits\":" + String(brailleBits) + ",";
   jsonOut += "\"mode\":" + String((int)currentMode) + ",";
   jsonOut += "\"cursor\":" + String(cursorPos) + ",";
@@ -1306,11 +1373,9 @@ void setup() {
   bootId = esp_random();
   Serial.begin(9600);
   
-  // LEDC Channel 0 for Buzzer PWM Sound / Volume
   ledcSetup(0, 2000, 8);
   ledcAttachPin(buzzerPin, 0);
 
-  // LEDC Channel 1 for LCD PWM Brightness
   ledcSetup(1, 5000, 8);
   ledcAttachPin(LCD_BACKLIGHT_PIN, 1);
 
@@ -1330,16 +1395,18 @@ void setup() {
   lcdBrightness = prefs.getInt("bright", 100);
   soundVolume = prefs.getInt("vol", 100);
   ttsMode = prefs.getInt("ttsMode", 1);
+  isSetupDone = prefs.getBool("setupDone", false);
   prefs.end();
 
   applyBrightness(lcdBrightness);
 
-  // Dual AP + STA Wi-Fi Mode
   WiFi.mode(WIFI_AP_STA);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
   WiFi.softAP("Braillify", "");
-  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
 
-  // Restore Saved Wi-Fi Credentials
+  dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+  dnsServer.start(DNS_PORT, "*", apIP);
+
   prefs.begin("wifi", false);
   wifiSSID = prefs.getString("ssid", "");
   wifiPass = prefs.getString("pass", "");
@@ -1350,8 +1417,7 @@ void setup() {
     wifiStatusMsg = "Connecting to " + wifiSSID + "...";
   }
 
-  // Register Web Routes
-  server.on("/", handleRoot);
+  server.on("/", handleCaptivePortal);
   server.on("/api/state", handleApiState);
   server.on("/api/key", handleApiKey);
   server.on("/api/setcursor", handleApiSetCursor);
@@ -1363,9 +1429,19 @@ void setup() {
   server.on("/api/settings", handleApiSettings);
   server.on("/api/power", handleApiPower);
   server.on("/api/reboot", handleApiReboot);
-  autoConnectWifi();
+  server.on("/api/finish_setup", handleApiFinishSetup);
+
+  server.on("/generate_204", handleCaptivePortal);
+  server.on("/gen_204", handleCaptivePortal);
+  server.on("/connectivity-check.html", handleCaptivePortal);
+  server.on("/hotspot-detect.html", handleCaptivePortal);
+  server.on("/library/test/success.html", handleCaptivePortal);
+  server.on("/success.txt", handleCaptivePortal);
+  server.on("/ncsi.txt", handleCaptivePortal);
+  server.on("/connecttest.txt", handleCaptivePortal);
+  server.on("/redirect", handleCaptivePortal);
+  server.on("/canonical.html", handleCaptivePortal);
   
-  // Register GitHub Remote OTA Route
   server.on("/api/ota_update", HTTP_GET, []() {
     String defaultUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/firmware.bin";
     String targetUrl = server.hasArg("url") ? server.arg("url") : defaultUrl;
@@ -1374,7 +1450,6 @@ void setup() {
     updateFirmwareFromGitHub(targetUrl);
   });
 
-  // Manual Local File Upload OTA
   server.on("/update", HTTP_GET, []() {
     String html = "<html><body>";
     html += "<form method='POST' action='/update' enctype='multipart/form-data'>";
@@ -1387,30 +1462,35 @@ void setup() {
 
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
-    server.send(200, "text/plain", (Update.hasError()) ? "Update Failed!" : "Update Success! Rebooting...");
+    server.send(200, "text/plain", (Update.hasError()) ? "Update Failed! Check partition scheme or binary file." : "Update Success! Rebooting...");
     smartDelay(1000);
     ESP.restart();
   }, []() {
     HTTPUpload& upload = server.upload();
     if (upload.status == UPLOAD_FILE_START) {
       Serial.printf("Update Firmware: %s\n", upload.filename.c_str());
-      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Update.clearError();
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
         Update.printError(Serial);
       }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
-      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-        Update.printError(Serial);
+      if (!Update.hasError()) {
+        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+          Update.printError(Serial);
+        }
       }
     } else if (upload.status == UPLOAD_FILE_END) {
-      if (Update.end(true)) {
-        Serial.printf("Update Success: %u bytes\n", upload.totalSize);
-      } else {
-        Update.printError(Serial);
+      if (!Update.hasError()) {
+        if (Update.end(true)) {
+          Serial.printf("Update Success: %u bytes\n", upload.totalSize);
+        } else {
+          Update.printError(Serial);
+        }
       }
     }
   });
 
-  server.onNotFound(handleRoot);
+  server.onNotFound(handleCaptivePortal);
   server.begin();
 
   if (MDNS.begin("braillify")) {
@@ -1574,6 +1654,7 @@ char getHeldKey() {
 void loop() {
   dnsServer.processNextRequest();
   server.handleClient();
+  checkWifiStatus();
 
   char key = getHeldKey();  
   unsigned long now = millis();
