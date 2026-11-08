@@ -14,7 +14,7 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.5.2"
+#define FIRMWARE_VERSION "1.0.5.3"
 
 Preferences prefs;
 uint32_t bootId = 0;
@@ -44,6 +44,10 @@ const unsigned long WIFI_TIMEOUT_MS = 12000;
 String wifiSSID = "";
 String wifiPass = "";
 String wifiStatusMsg = "AP Mode Active (192.168.4.1)";
+
+String devicePin = "";
+String secQuestion = "";
+String secAnswer = "";
 
 // Keypad setup
 const byte ROWS = 4;
@@ -828,6 +832,86 @@ struct WifiCred {
 };
 std::vector<WifiCred> knownWifis;
 
+void loadSecurityPreferences() {
+  prefs.begin("settings", true); // Read-only mode
+  devicePin   = prefs.getString("pin", "1234");
+  secQuestion = prefs.getString("secQ", "What is your pet's name?");
+  secAnswer   = prefs.getString("secA", "braille");
+  prefs.end();
+}
+
+// Helper: Persist Security Config to Preferences
+bool saveSecurityPreferences(const String& newPin, const String& newQ, const String& newA) {
+  if (newPin.length() != 4 || newQ.length() == 0 || newA.length() == 0) return false;
+
+  prefs.begin("settings", false); // Read-write mode
+  devicePin = newPin;
+  secQuestion = newQ;
+  secAnswer = newA;
+  
+  prefs.putString("pin", devicePin);
+  prefs.putString("secQ", secQuestion);
+  prefs.putString("secA", secAnswer);
+  prefs.end();
+  return true;
+}
+
+void handleApiVerifyPin() {
+  if (server.hasArg("pin")) {
+    loadSecurityPreferences(); // Refresh from Preferences
+    if (server.arg("pin") == devicePin) {
+      connectionTone();
+      server.send(200, "application/json", "{\"status\":\"success\",\"msg\":\"Connected to Braillify!\"}");
+      return;
+    }
+  }
+  server.send(401, "application/json", "{\"status\":\"error\",\"msg\":\"Incorrect PIN\"}");
+}
+
+void handleApiGetSecQuestion() {
+  loadSecurityPreferences();
+  String json = "{\"question\":\"" + escapeJsonString(secQuestion) + "\"}";
+  server.send(200, "application/json", json);
+}
+
+void handleApiResetPin() {
+  if (server.hasArg("answer") && server.hasArg("newPin")) {
+    loadSecurityPreferences();
+    
+    String ans = server.arg("answer");
+    String newPin = server.arg("newPin");
+    
+    ans.trim();
+    ans.toLowerCase();
+    String storedAns = secAnswer;
+    storedAns.trim();
+    storedAns.toLowerCase();
+
+    if (ans == storedAns && newPin.length() == 4) {
+      if (saveSecurityPreferences(newPin, secQuestion, secAnswer)) {
+        connectionTone();
+        server.send(200, "application/json", "{\"status\":\"success\",\"msg\":\"PIN reset successfully!\"}");
+        return;
+      }
+    }
+  }
+  server.send(400, "application/json", "{\"status\":\"error\",\"msg\":\"Invalid security answer or PIN format\"}");
+}
+
+void handleApiSaveSecurity() {
+  if (server.hasArg("pin") && server.hasArg("secQ") && server.hasArg("secA")) {
+    String p = server.arg("pin");
+    String q = server.arg("secQ");
+    String a = server.arg("secA");
+
+    if (saveSecurityPreferences(p, q, a)) {
+      server.send(200, "application/json", "{\"status\":\"success\",\"msg\":\"Security settings updated!\"}");
+      return;
+    }
+  }
+  server.send(400, "application/json", "{\"status\":\"error\",\"msg\":\"Invalid configuration parameters\"}");
+}
+
 void loadKnownWifis() {
   knownWifis.clear();
   if (!LittleFS.exists("/wifis.txt")) return;
@@ -1397,7 +1481,7 @@ void setup() {
   ttsMode = prefs.getInt("ttsMode", 1);
   isSetupDone = prefs.getBool("setupDone", false);
   prefs.end();
-
+  loadSecurityPreferences();
   applyBrightness(lcdBrightness);
 
   WiFi.mode(WIFI_AP_STA);
@@ -1431,6 +1515,11 @@ void setup() {
   server.on("/api/reboot", handleApiReboot);
   server.on("/api/finish_setup", handleApiFinishSetup);
 
+  server.on("/api/verify_pin", handleApiVerifyPin);
+  server.on("/api/get_sec_question", handleApiGetSecQuestion);
+  server.on("/api/reset_pin", handleApiResetPin);
+  server.on("/api/save_security", handleApiSaveSecurity);
+
   server.on("/generate_204", handleCaptivePortal);
   server.on("/gen_204", handleCaptivePortal);
   server.on("/connectivity-check.html", handleCaptivePortal);
@@ -1441,6 +1530,7 @@ void setup() {
   server.on("/connecttest.txt", handleCaptivePortal);
   server.on("/redirect", handleCaptivePortal);
   server.on("/canonical.html", handleCaptivePortal);
+  
   
   server.on("/api/ota_update", HTTP_GET, []() {
     String defaultUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/firmware.bin";
@@ -1583,6 +1673,11 @@ void scanTone() {
   sound(2000, 80); smartDelay(100);
   sound(2600, 80); smartDelay(100);
   sound(3200, 120); smartDelay(150);
+}
+void connectionTone() {
+  sound(1800, 80); smartDelay(100);
+  sound(2400, 80); smartDelay(100);
+  sound(3000, 140); smartDelay(150);
 }
 
 void triggerScanNotice() {

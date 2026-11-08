@@ -39,9 +39,9 @@ const char index_html[] PROGMEM = R"rawliteral(
     .wifi-btn { background: var(--blue-light); color: var(--blue); }
 
     /* Modals */
-    .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(17,24,39,0.5); backdrop-filter: blur(3px); display: none; justify-content: center; align-items: center; z-index: 999; padding: 15px; }
+    .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(17,24,39,0.5); backdrop-filter: blur(3px); display: none; justify-content: center; align-items: center; z-index: 999; padding: 15px; overflow-y: auto; -webkit-overflow-scrolling: touch}
     .modal-overlay.active { display: flex; }
-    .modal-content { width: 100%; max-width: 420px; background: #ffffff; border: 3px solid var(--border); border-radius: 12px; box-shadow: 8px 8px 0px var(--border); padding: 20px; position: relative; animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    .modal-content { width: 100%; max-width: 420px; background: #ffffff; border: 3px solid var(--border); border-radius: 12px; box-shadow: 8px 8px 0px var(--border); padding: 20px; position: relative; animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); max-height: 75vh; overflow-y: auto;}
     @keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
     .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border); padding-bottom: 10px; margin-bottom: 14px; }
@@ -419,6 +419,60 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 </div>
 
+<div class="modal-overlay active" id="pin-lock-modal">
+  <div class="modal-content" style="max-width: 360px; text-align: center;">
+    
+    <!-- PIN Entry View -->
+    <div id="pin-entry-view">
+      <div class="wizard-hero-icon" style="font-size: 2.5rem; margin-bottom: 6px;">🔒</div>
+      <h2 style="font-size: 1.3rem; font-weight: 900; color: var(--text); margin-bottom: 4px;">Braillify Security</h2>
+      <p style="font-size: 0.8rem; color: #57606a; margin-bottom: 14px; font-weight: 600;">Enter 4-digit PIN to connect</p>
+
+      <div style="display: flex; justify-content: center; gap: 8px; margin-bottom: 16px;">
+        <input type="password" maxlength="1" id="pin-d1" class="wifi-input" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(1)">
+        <input type="password" maxlength="1" id="pin-d2" class="wifi-input" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(2)">
+        <input type="password" maxlength="1" id="pin-d3" class="wifi-input" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(3)">
+        <input type="password" maxlength="1" id="pin-d4" class="wifi-input" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(4)">
+      </div>
+
+      <div class="fc-actions" style="margin-bottom: 12px;">
+        <button class="fc-btn" style="background:#e8f5e9; color:#2e7d32; font-size:0.9rem; padding:10px;" onclick="submitPinAuth()">Connect to Braillify</button>
+      </div>
+
+      <div id="pin-error-msg" style="font-size: 0.78rem; font-weight: 800; color: var(--red); min-height: 1.2em; margin-bottom: 8px;"></div>
+
+      <button onclick="showForgotPinView()" style="background: none; border: none; color: var(--blue); font-size: 0.78rem; font-weight: 800; cursor: pointer; text-decoration: underline;">
+        Forgot PIN?
+      </button>
+    </div>
+
+    <!-- Forgot PIN View -->
+    <div id="pin-forgot-view" style="display: none;">
+      <div class="modal-header" style="justify-content: center; margin-bottom: 10px;">
+        <div class="modal-title" style="font-size: 1rem;">🔑 Reset PIN</div>
+      </div>
+
+      <div style="font-size: 0.8rem; font-weight: 800; color: var(--text); margin-bottom: 6px; text-align: left;">Security Question:</div>
+      <div id="forgot-sec-question" style="font-size: 0.85rem; font-weight: 700; color: var(--orange-dark); background: var(--bg); padding: 8px; border-radius: 6px; border: 1.5px solid var(--border); margin-bottom: 12px; text-align: left;">
+        Loading question...
+      </div>
+
+      <div class="wifi-input-group" style="margin-bottom: 10px;">
+        <input type="text" id="forgot-answer-input" class="wifi-input" placeholder="Your Security Answer">
+        <input type="password" maxlength="4" id="forgot-new-pin" class="wifi-input" placeholder="New 4-Digit PIN">
+      </div>
+
+      <div class="fc-actions" style="margin-bottom: 8px;">
+        <button class="fc-btn" style="background:#e8f5e9; color:#2e7d32;" onclick="submitForgotPinReset()">Reset PIN & Connect</button>
+      </div>
+      <button onclick="hideForgotPinView()" style="background: none; border: none; color: #57606a; font-size: 0.75rem; font-weight: bold; cursor: pointer;">
+        ← Back to PIN Entry
+      </button>
+    </div>
+
+  </div>
+</div>
+
 <!-- Device Settings Modal -->
 <div class="modal-overlay" id="settings-modal" onclick="handleModalBackdropClick(event)">
   <div class="modal-content">
@@ -474,9 +528,22 @@ const char index_html[] PROGMEM = R"rawliteral(
       </button>
     </div>
 
+    <!-- Security Configuration -->
+    <div class="setting-group" style="border-top: 2px dashed var(--border); padding-top: 14px; margin-top: 14px;">
+      <div class="setting-header"><span>🔐 Security & Authentication</span></div>
+      <div class="wifi-input-group" style="margin-bottom: 8px;">
+        <input type="password" maxlength="4" id="cfg-pin" class="wifi-input" placeholder="New 4-Digit PIN">
+        <input type="text" id="cfg-sec-q" class="wifi-input" placeholder="Security Question">
+        <input type="text" id="cfg-sec-a" class="wifi-input" placeholder="Security Answer">
+      </div>
+      <button onclick="updateSecurityConfigFromSettings()" class="btn-update" style="background: #e8f5e9; color: #2e7d32;">
+        💾 Save Security Preferences
+      </button>
+    </div>
+
     <!-- Firmware OTA Section -->
     <div class="ota-section" style="border-top: 2px dashed var(--border); padding-top: 14px;">
-      <div class="section-title" style="margin-bottom: 8px;">Firmware Update</div>
+      <div class="setting-header"><span>⚡ Firmware Update</span></div>
       <button id="ota-btn" onclick="triggerOtaUpdate()" class="btn-update">
         ⚡ Check & Update Firmware (GitHub OTA)
       </button>
@@ -702,6 +769,136 @@ function nextWizardStep(stepNum) {
 function prevWizardStep(stepNum) {
   nextWizardStep(stepNum);
 }
+
+function updateSecurityConfigFromSettings() {
+  const pin = document.getElementById('cfg-pin').value;
+  const q = document.getElementById('cfg-sec-q').value;
+  const a = document.getElementById('cfg-sec-a').value;
+
+  if (pin.length !== 4 || !q || !a) {
+    alert('Please enter a valid 4-digit PIN, security question, and answer.');
+    return;
+  }
+
+  fetch(`/api/save_security?pin=${encodeURIComponent(pin)}&secQ=${encodeURIComponent(q)}&secA=${encodeURIComponent(a)}`)
+    .then(r => r.json())
+    .then(d => {
+      alert('✅ ' + (d.msg || 'Security configuration saved to Preferences!'));
+      document.getElementById('cfg-pin').value = '';
+      document.getElementById('cfg-sec-q').value = '';
+      document.getElementById('cfg-sec-a').value = '';
+    })
+    .catch(() => alert('❌ Failed to update security preferences.'));
+}
+
+let isAuthenticated = false;
+
+function checkPinAuthOnLoad() {
+  const isAuthed = sessionStorage.getItem('braillify_authed') === 'true';
+  const lockModal = document.getElementById('pin-lock-modal');
+
+  if (isAuthed) {
+    isAuthenticated = true;
+    if (lockModal) lockModal.classList.remove('active');
+  } else {
+    isAuthenticated = false;
+    if (lockModal) lockModal.classList.add('active');
+  }
+  updateBodyScrollLock();
+}
+
+function focusNextPin(currentIdx) {
+  const current = document.getElementById('pin-d' + currentIdx);
+  if (current.value.length === 1 && currentIdx < 4) {
+    document.getElementById('pin-d' + (currentIdx + 1)).focus();
+  }
+  if (currentIdx === 4 && current.value.length === 1) {
+    submitPinAuth();
+  }
+}
+
+function submitPinAuth() {
+  const p1 = document.getElementById('pin-d1').value;
+  const p2 = document.getElementById('pin-d2').value;
+  const p3 = document.getElementById('pin-d3').value;
+  const p4 = document.getElementById('pin-d4').value;
+  const fullPin = p1 + p2 + p3 + p4;
+
+  const errMsg = document.getElementById('pin-error-msg');
+  if (fullPin.length !== 4) {
+    errMsg.innerText = 'Please enter all 4 digits.';
+    return;
+  }
+
+  fetch('/api/verify_pin?pin=' + encodeURIComponent(fullPin))
+    .then(r => {
+      if (!r.ok) throw new Error('Incorrect PIN');
+      return r.json();
+    })
+    .then(data => {
+      sessionStorage.setItem('braillify_authed', 'true');
+      isAuthenticated = true;
+      const lockModal = document.getElementById('pin-lock-modal');
+      if (lockModal) lockModal.classList.remove('active');
+      updateBodyScrollLock();
+      
+      speakTextUtterance('Connected to Braillify', true);
+      alert('✅ ' + (data.msg || 'Connected to Braillify!'));
+    })
+    .catch(() => {
+      errMsg.innerText = '❌ Incorrect PIN. Try again.';
+      document.getElementById('pin-d1').value = '';
+      document.getElementById('pin-d2').value = '';
+      document.getElementById('pin-d3').value = '';
+      document.getElementById('pin-d4').value = '';
+      document.getElementById('pin-d1').focus();
+    });
+}
+
+function showForgotPinView() {
+  document.getElementById('pin-entry-view').style.display = 'none';
+  document.getElementById('pin-forgot-view').style.display = 'block';
+
+  fetch('/api/get_sec_question')
+    .then(r => r.json())
+    .then(d => {
+      document.getElementById('forgot-sec-question').innerText = d.question || 'What is your pet\'s name?';
+    });
+}
+
+function hideForgotPinView() {
+  document.getElementById('pin-forgot-view').style.display = 'none';
+  document.getElementById('pin-entry-view').style.display = 'block';
+}
+
+function submitForgotPinReset() {
+  const ans = document.getElementById('forgot-answer-input').value;
+  const newPin = document.getElementById('forgot-new-pin').value;
+
+  if (!ans || newPin.length !== 4) {
+    alert('Please enter your security answer and a new 4-digit PIN.');
+    return;
+  }
+
+  fetch(`/api/reset_pin?answer=${encodeURIComponent(ans)}&newPin=${encodeURIComponent(newPin)}`)
+    .then(r => {
+      if (!r.ok) throw new Error('Reset failed');
+      return r.json();
+    })
+    .then(d => {
+      sessionStorage.setItem('braillify_authed', 'true');
+      isAuthenticated = true;
+      document.getElementById('pin-lock-modal').classList.remove('active');
+      updateBodyScrollLock();
+      alert('✅ ' + d.msg);
+    })
+    .catch(() => {
+      alert('❌ Incorrect security answer. Reset failed.');
+    });
+}
+
+// Enforce PIN check on page load
+checkPinAuthOnLoad();
 
 function connectWifiFromWizard() {
   const ssid = document.getElementById('w-wifi-ssid').value;
