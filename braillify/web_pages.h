@@ -24,7 +24,6 @@ const char index_html[] PROGMEM = R"rawliteral(
     html, body { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
     body { background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 15px; }
     
-    /* Lock background scroll when any modal is active */
     body.modal-open { overflow: hidden !important; height: 100vh; touch-action: none; }
 
     .container { width: 100%; max-width: 480px; background: var(--panel); border: 3px solid var(--border); box-shadow: 6px 6px 0px var(--border); border-radius: 12px; padding: 20px; position: relative; }
@@ -32,16 +31,20 @@ const char index_html[] PROGMEM = R"rawliteral(
     .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px dashed var(--border); padding-bottom: 12px; margin-bottom: 16px; }
     .header-title h1 { font-size: 1.5rem; letter-spacing: 1px; color: var(--text); font-weight: 900; font-family: 'Courier New', monospace; }
     .header-title .sub { font-size: 0.7rem; color: var(--orange-dark); font-weight: bold; }
-    .header-btns { display: flex; gap: 6px; }
+    .header-btns { display: flex; gap: 6px; align-items: center; }
 
     .modal-trigger-btn { background: #e8f5e9; border: 2px solid var(--border); color: #2e7d32; font-size: 0.75rem; font-weight: bold; padding: 6px 10px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 4px; box-shadow: 2px 2px 0px var(--border); transition: all .05s; }
     .modal-trigger-btn:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
     .wifi-btn { background: var(--blue-light); color: var(--blue); }
 
+    /* Top Bar Signal Badge */
+    .wifi-signal-badge { display: inline-flex; align-items: center; gap: 4px; background: #ffffff; border: 1.5px solid var(--border); padding: 2px 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 800; color: var(--blue); }
+    .signal-icon-symbol { font-size: 0.95rem; line-height: 1; vertical-align: middle; }
+
     /* Modals */
     .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(17,24,39,0.5); backdrop-filter: blur(3px); display: none; justify-content: center; align-items: center; z-index: 999; padding: 15px; overflow-y: auto; -webkit-overflow-scrolling: touch}
     .modal-overlay.active { display: flex; }
-    .modal-content { width: 100%; max-width: 420px; background: #ffffff; border: 3px solid var(--border); border-radius: 12px; box-shadow: 8px 8px 0px var(--border); padding: 20px; position: relative; animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); max-height: 75vh; overflow-y: auto;}
+    .modal-content { width: 100%; max-width: 420px; background: #ffffff; border: 3px solid var(--border); border-radius: 12px; box-shadow: 8px 8px 0px var(--border); padding: 20px; position: relative; animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); max-height: 80vh; overflow-y: auto;}
     @keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
     .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border); padding-bottom: 10px; margin-bottom: 14px; }
@@ -68,12 +71,10 @@ const char index_html[] PROGMEM = R"rawliteral(
     .wizard-btn.primary { background: #e8f5e9; color: #2e7d32; }
     .wizard-btn.secondary { background: var(--bg); color: var(--text); }
 
-    /* Key Quickstart Guide */
     .key-guide-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 10px; }
     .key-guide-item { background: var(--bg); border: 2px solid var(--border); border-radius: 8px; padding: 8px; display: flex; align-items: center; gap: 8px; font-size: 0.78rem; font-weight: 700; }
     .key-guide-badge { background: var(--orange); color: white; padding: 4px 8px; border-radius: 6px; font-weight: 900; font-family: 'Courier New', monospace; }
 
-    /* Flashcard Modal Elements */
     .fc-scores { display: flex; gap: 10px; font-size: 0.8rem; font-weight: 800; font-family: 'Courier New', monospace; margin-bottom: 14px; justify-content: center; }
     .fc-score-badge { background: var(--blue-light); border: 2px solid var(--border); padding: 4px 10px; border-radius: 6px; }
     .fc-card-display { display: flex; flex-direction: column; align-items: center; background: var(--bg); border: 2px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 14px; text-align: center; }
@@ -89,7 +90,6 @@ const char index_html[] PROGMEM = R"rawliteral(
     .fc-btn { flex: 1; background: #fff3e0; border: 2px solid var(--border); color: var(--orange-dark); font-size: 0.8rem; font-weight: 800; padding: 8px; border-radius: 6px; cursor: pointer; box-shadow: 2px 2px 0px var(--border); text-align: center; transition: all .05s; }
     .fc-btn:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
 
-    /* Wi-Fi Modal Elements */
     .wifi-list { max-height: 160px; overflow-y: auto; border: 2px solid var(--border); border-radius: 8px; margin-bottom: 12px; background: var(--bg); }
     .wifi-item { padding: 8px 12px; border-bottom: 1px solid #d0d7de; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-weight: 700; font-size: 0.85rem; }
     .wifi-item:last-child { border-bottom: none; }
@@ -99,18 +99,15 @@ const char index_html[] PROGMEM = R"rawliteral(
     .wifi-input { width: 100%; padding: 8px 10px; border: 2px solid var(--border); border-radius: 6px; font-size: 0.85rem; font-weight: 600; }
     .wifi-status-info { font-size: 0.75rem; font-weight: bold; color: var(--orange-dark); margin-bottom: 10px; text-align: center; }
 
-    /* Settings Modal Controls */
     .setting-group { margin-bottom: 16px; }
     .setting-header { display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 800; margin-bottom: 6px; color: var(--text); }
     .setting-slider { width: 100%; accent-color: var(--orange-dark); cursor: pointer; height: 8px; }
     .setting-select { width: 100%; padding: 8px 10px; border: 2px solid var(--border); border-radius: 6px; font-size: 0.85rem; font-weight: bold; background: #fff; }
 
-    /* Camera OCR Modal Elements */
     .camera-box { width: 100%; height: 210px; background: #000; border: 2px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; position: relative; display: flex; justify-content: center; align-items: center; }
     .camera-video { width: 100%; height: 100%; object-fit: cover; }
     .ocr-status { font-size: 0.8rem; font-weight: bold; color: var(--blue); text-align: center; margin-bottom: 10px; min-height: 1.2em; }
 
-    /* Text Output Buffer Section */
     .full-text-section { margin-bottom: 16px; }
     .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
     .section-title { font-size: 0.8rem; color: var(--orange-dark); font-weight: bold; text-transform: uppercase; }
@@ -119,7 +116,6 @@ const char index_html[] PROGMEM = R"rawliteral(
     .action-btn:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
     .action-btn svg { width: 14px; height: 14px; fill: currentColor; }
 
-    /* Mobile Text Highlight Buffer Box */
     .full-text-box { background: #ffffff; border: 2px solid var(--border); border-radius: 8px; padding: 10px; min-height: 64px; max-height: 120px; overflow-y: auto; overflow-x: hidden; box-shadow: inset 0 0 4px rgba(0,0,0,0.06); display: flex; flex-wrap: wrap; align-content: flex-start; gap: 2px; user-select: none; -webkit-user-select: none; touch-action: none; }
     .char-pair { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; padding: 2px 4px; border-radius: 4px; user-select: none; min-width: 18px; transition: background 0.1s; position: relative; }
     .char-pair:hover { background: var(--blue-light); }
@@ -129,15 +125,12 @@ const char index_html[] PROGMEM = R"rawliteral(
     .char-pair .top-char { font-size: 1.1rem; font-weight: 900; font-family: 'Courier New', monospace; line-height: 1; pointer-events: none; }
     .char-pair .sub-braille { font-size: 0.85rem; line-height: 1; margin-top: 2px; opacity: 0.85; font-family: sans-serif; pointer-events: none; }
 
-    /* Mobile Highlight Floating Toolbar */
     .selection-toolbar { display: none; margin-top: 8px; background: #e3f2fd; border: 2px solid var(--border); padding: 6px 10px; border-radius: 8px; justify-content: space-between; align-items: center; font-size: 0.75rem; font-weight: bold; }
     .selection-toolbar.active { display: flex; }
 
-    /* LCD Screen Frame */
-    .lcd-frame { background: var(--lcd-bg); border: 3px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; box-shadow: inset 0 0 5px rgba(0,0,0,0.08); }
+    .lcd-frame { background: var(--lcd-bg); border: 3px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; box-shadow: inset 0 0 5px rgba(0,0,0,0.08); position: relative; }
     .lcd-line { font-size: 1.2rem; color: var(--lcd-text); letter-spacing: 2px; white-space: pre; font-weight: bold; font-family: 'Courier New', monospace; min-height: 1.4em; }
 
-    /* Status Card */
     .status-card { display: flex; align-items: center; justify-content: space-between; background: var(--blue-light); border: 2px solid var(--border); padding: 14px; border-radius: 8px; margin-bottom: 16px; }
     .cell-preview-box { display: flex; align-items: center; gap: 16px; }
     .braille-pattern-cell { display: grid; grid-template-columns: repeat(2, 16px); grid-gap: 8px; background: #ffffff; border: 2px solid var(--border); padding: 8px; border-radius: 6px; }
@@ -150,7 +143,6 @@ const char index_html[] PROGMEM = R"rawliteral(
     .bit-badge { display: flex; flex-direction: column; align-items: flex-end; font-size: 0.75rem; font-weight: bold; font-family: 'Courier New', monospace; }
     .bit-badge span { color: var(--blue); }
 
-    /* Keypad Grid */
     .keypad-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
     .key-btn { background: #ffffff; border: 2px solid var(--border); color: var(--text); height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; box-shadow: 2px 3px 0px var(--border); transition: all .05s; user-select: none; -webkit-touch-callout: none; }
     .key-btn:active { transform: translate(2px, 2px); box-shadow: 0px 0px 0px var(--border); background: var(--blue-light); }
@@ -162,7 +154,6 @@ const char index_html[] PROGMEM = R"rawliteral(
     .dot-key-sub { font-size: 0.6rem; color: #57606a; font-weight: 700; }
     .footer { text-align: center; font-size: .7rem; font-weight: bold; color: #57606a; margin-top: 14px; border-top: 2px solid var(--border); padding-top: 8px; }
 
-    /* OTA / Settings Section */
     .ota-section { margin-top: 12px; text-align: center; }
     .btn-update { width: 100%; background: #e8f5e9; border: 2px solid var(--border); color: #2e7d32; font-size: 0.85rem; font-weight: 800; padding: 10px; border-radius: 8px; cursor: pointer; box-shadow: 2px 2px 0px var(--border); transition: all .05s; display: flex; align-items: center; justify-content: center; gap: 6px; }
     .btn-update:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
@@ -179,6 +170,10 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="sub">HARDWARE TRANSLATOR</div>
     </div>
     <div class="header-btns">
+      <div class="wifi-signal-badge" id="wifi-signal-badge" title="Wi-Fi Signal Strength">
+        <span class="signal-icon-symbol" id="sig-symbol">📡</span>
+        <span id="sig-dbm-label">--</span>
+      </div>
       <button class="modal-trigger-btn wifi-btn" onclick="openWifiModal()">📶 Wi-Fi</button>
       <button class="modal-trigger-btn" onclick="openFlashcardModal()">🎓 Practice</button>
     </div>
@@ -238,7 +233,6 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 
   <div class="keypad-grid">
-    <!-- Row 1: Camera SCAN button -->
     <button class="key-btn cmd" onclick="openCameraModal()" title="Camera OCR / Scan">
       <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm9-9h-3.17L16 4H8L6.17 6H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zm-9 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>
       <span class="key-label">SCAN</span>
@@ -250,7 +244,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       <span class="key-label">SAVE</span>
     </button>
 
-    <!-- Row 2 -->
     <button class="key-btn cmd" data-key="4" title="Mute Toggle">
       <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89 0.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-0.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
       <span class="key-label">MUTE</span>
@@ -262,7 +255,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       <span class="key-label">LOAD</span>
     </button>
 
-    <!-- Row 3 -->
     <button class="key-btn cmd" data-key="7" title="Cursor Left">
       <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
       <span class="key-label">LEFT</span>
@@ -274,7 +266,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       <span class="key-label">RIGHT</span>
     </button>
 
-    <!-- Row 4 -->
     <button class="key-btn cmd" data-key="*" title="Cycle Mode">
       <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-0.25 1.97-0.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01 0.25-1.97 0.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
       <span class="key-label">MODE</span>
@@ -312,6 +303,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="wizard-dot" id="wdot-3"></div>
       <div class="wizard-dot" id="wdot-4"></div>
       <div class="wizard-dot" id="wdot-5"></div>
+      <div class="wizard-dot" id="wdot-6"></div>
     </div>
 
     <!-- Step 1: Welcome -->
@@ -319,7 +311,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="wizard-hero">
         <div class="wizard-hero-icon">⠃⠗⠁⠊⠇⠇⠊⠋⠽</div>
         <h2>Welcome to Braillify!</h2>
-        <p>Your hardware tactile Braille translator is ready. Let's customize your audio, screen brightness, and Wi-Fi preferences in a few quick steps.</p>
+        <p>Your hardware tactile Braille translator is ready. Let's customize your audio, screen brightness, security PIN, and Wi-Fi preferences in a few quick steps.</p>
       </div>
       <div class="wizard-nav">
         <div></div>
@@ -360,17 +352,33 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="setting-header"><span>LCD Backlight Brightness</span><span id="w-bright-label">100%</span></div>
         <input type="range" id="w-bright-slider" min="0" max="100" value="100" class="setting-slider" onchange="setBrightness(this.value)" oninput="document.getElementById('w-bright-label').innerText=this.value+'%'">
       </div>
-      <div class="wizard-hero">
-        <p>💡 Tip: You can adjust brightness and sleep states anytime in Device Settings.</p>
-      </div>
       <div class="wizard-nav">
         <button class="wizard-btn secondary" onclick="prevWizardStep(2)">← Back</button>
-        <button class="wizard-btn primary" onclick="nextWizardStep(4)">Next: Wi-Fi →</button>
+        <button class="wizard-btn primary" onclick="nextWizardStep(4)">Next: Security PIN →</button>
       </div>
     </div>
 
-    <!-- Step 4: Wi-Fi Setup -->
+    <!-- Step 4: Security PIN & Question Setup -->
     <div class="wizard-step" id="wstep-4">
+      <div class="modal-header">
+        <div class="modal-title">🔐 Device Security PIN</div>
+      </div>
+      <p style="font-size:0.8rem; color:#57606a; margin-bottom:12px; font-weight:600;">Set a 4-digit PIN and recovery question to secure web interface access.</p>
+
+      <div class="wifi-input-group">
+        <input type="password" maxlength="4" id="w-pin-input" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="Set 4-Digit PIN (e.g. 1234)">
+        <input type="text" id="w-sec-q-input" class="wifi-input" placeholder="Security Question (e.g. Pet Name?)">
+        <input type="text" id="w-sec-a-input" class="wifi-input" placeholder="Security Answer">
+      </div>
+
+      <div class="wizard-nav">
+        <button class="wizard-btn secondary" onclick="prevWizardStep(3)">← Back</button>
+        <button class="wizard-btn primary" onclick="saveWizardSecurity()">Next: Wi-Fi →</button>
+      </div>
+    </div>
+
+    <!-- Step 5: Wi-Fi Setup -->
+    <div class="wizard-step" id="wstep-5">
       <div class="modal-header">
         <div class="modal-title">📶 Connect Wi-Fi</div>
       </div>
@@ -379,7 +387,6 @@ const char index_html[] PROGMEM = R"rawliteral(
         <button class="fc-btn" onclick="scanWifiNetworks()">🔍 Scan Wi-Fi Networks</button>
       </div>
 
-      <!-- ADD THIS LIST CONTAINER FOR SCAN RESULTS -->
       <div class="wifi-list" id="w-wifi-list" style="max-height: 120px; margin-bottom: 12px;">
         <div class="wifi-item" style="justify-content:center;color:#57606a;">Click Scan to search networks</div>
       </div>
@@ -392,13 +399,13 @@ const char index_html[] PROGMEM = R"rawliteral(
         <button class="fc-btn" style="background:#e8f5e9;color:#2e7d32;" onclick="connectWifiFromWizard()">Connect Network</button>
       </div>
       <div class="wizard-nav">
-        <button class="wizard-btn secondary" onclick="prevWizardStep(3)">← Back</button>
-        <button class="wizard-btn primary" onclick="nextWizardStep(5)">Next: Overview →</button>
+        <button class="wizard-btn secondary" onclick="prevWizardStep(4)">← Back</button>
+        <button class="wizard-btn primary" onclick="nextWizardStep(6)">Next: Overview →</button>
       </div>
     </div>
 
-    <!-- Step 5: Quickstart & Finish -->
-    <div class="wizard-step" id="wstep-5">
+    <!-- Step 6: Quickstart & Finish -->
+    <div class="wizard-step" id="wstep-6">
       <div class="modal-header">
         <div class="modal-title">✨ Keypad Quick Guide</div>
       </div>
@@ -411,7 +418,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="key-guide-item"><span class="key-guide-badge">B</span> Load Memory</div>
       </div>
       <div class="wizard-nav">
-        <button class="wizard-btn secondary" onclick="prevWizardStep(4)">← Back</button>
+        <button class="wizard-btn secondary" onclick="prevWizardStep(5)">← Back</button>
         <button class="wizard-btn primary" onclick="finishWizardSetup()">🚀 Complete Setup</button>
       </div>
     </div>
@@ -419,20 +426,20 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 </div>
 
+<!-- PIN ACCESS LOCK MODAL -->
 <div class="modal-overlay active" id="pin-lock-modal">
   <div class="modal-content" style="max-width: 360px; text-align: center;">
     
-    <!-- PIN Entry View -->
     <div id="pin-entry-view">
       <div class="wizard-hero-icon" style="font-size: 2.5rem; margin-bottom: 6px;">🔒</div>
       <h2 style="font-size: 1.3rem; font-weight: 900; color: var(--text); margin-bottom: 4px;">Braillify Security</h2>
       <p style="font-size: 0.8rem; color: #57606a; margin-bottom: 14px; font-weight: 600;">Enter 4-digit PIN to connect</p>
 
       <div style="display: flex; justify-content: center; gap: 8px; margin-bottom: 16px;">
-        <input type="password" maxlength="1" id="pin-d1" class="wifi-input" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(1)">
-        <input type="password" maxlength="1" id="pin-d2" class="wifi-input" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(2)">
-        <input type="password" maxlength="1" id="pin-d3" class="wifi-input" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(3)">
-        <input type="password" maxlength="1" id="pin-d4" class="wifi-input" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(4)">
+        <input type="password" maxlength="1" id="pin-d1" class="wifi-input" inputmode="numeric" pattern="[0-9]*" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(1)">
+        <input type="password" maxlength="1" id="pin-d2" class="wifi-input" inputmode="numeric" pattern="[0-9]*" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(2)">
+        <input type="password" maxlength="1" id="pin-d3" class="wifi-input" inputmode="numeric" pattern="[0-9]*" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(3)">
+        <input type="password" maxlength="1" id="pin-d4" class="wifi-input" inputmode="numeric" pattern="[0-9]*" style="width: 45px; height: 50px; text-align: center; font-size: 1.4rem; font-weight: 900;" oninput="focusNextPin(4)">
       </div>
 
       <div class="fc-actions" style="margin-bottom: 12px;">
@@ -446,7 +453,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       </button>
     </div>
 
-    <!-- Forgot PIN View -->
     <div id="pin-forgot-view" style="display: none;">
       <div class="modal-header" style="justify-content: center; margin-bottom: 10px;">
         <div class="modal-title" style="font-size: 1rem;">🔑 Reset PIN</div>
@@ -459,7 +465,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
       <div class="wifi-input-group" style="margin-bottom: 10px;">
         <input type="text" id="forgot-answer-input" class="wifi-input" placeholder="Your Security Answer">
-        <input type="password" maxlength="4" id="forgot-new-pin" class="wifi-input" placeholder="New 4-Digit PIN">
+        <input type="password" maxlength="4" id="forgot-new-pin" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="New 4-Digit PIN">
       </div>
 
       <div class="fc-actions" style="margin-bottom: 8px;">
@@ -481,7 +487,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       <button class="modal-close-btn" onclick="closeSettingsModal()">&times;</button>
     </div>
 
-    <!-- TTS Mode Selection -->
     <div class="setting-group">
       <div class="setting-header">
         <span>🗣️ TTS Speech Mode</span>
@@ -494,7 +499,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       </select>
     </div>
 
-    <!-- Speech Rate Slider -->
     <div class="setting-group">
       <div class="setting-header">
         <span>⚡ Speech Rate / Speed</span>
@@ -503,7 +507,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       <input type="range" id="speech-rate-slider" min="0.5" max="2.0" step="0.1" value="1.0" class="setting-slider" oninput="document.getElementById('speech-rate-label').innerText=this.value+'x'">
     </div>
 
-    <!-- Brightness Slider -->
     <div class="setting-group">
       <div class="setting-header">
         <span>☀️ LCD Backlight Brightness</span>
@@ -512,7 +515,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       <input type="range" id="brightness-slider" min="0" max="100" value="100" class="setting-slider" onchange="setBrightness(this.value)" oninput="document.getElementById('brightness-val-label').innerText=this.value+'%'">
     </div>
 
-    <!-- Volume Slider -->
     <div class="setting-group" style="margin-bottom: 20px;">
       <div class="setting-header">
         <span>🔊 Buzzer Volume</span>
@@ -521,18 +523,16 @@ const char index_html[] PROGMEM = R"rawliteral(
       <input type="range" id="volume-slider" min="0" max="100" value="100" class="setting-slider" onchange="setVolume(this.value)" oninput="document.getElementById('volume-val-label').innerText = (this.value > 0 ? this.value + '%' : 'MUTED (0%)')">
     </div>
 
-    <!-- Re-run Wizard Button -->
     <div class="setting-group" style="margin-bottom: 16px;">
       <button onclick="closeSettingsModal(); openWizardModal();" class="btn-update" style="background: var(--blue-light); color: var(--blue);">
         🪄 Re-run Setup Wizard
       </button>
     </div>
 
-    <!-- Security Configuration -->
     <div class="setting-group" style="border-top: 2px dashed var(--border); padding-top: 14px; margin-top: 14px;">
       <div class="setting-header"><span>🔐 Security & Authentication</span></div>
       <div class="wifi-input-group" style="margin-bottom: 8px;">
-        <input type="password" maxlength="4" id="cfg-pin" class="wifi-input" placeholder="New 4-Digit PIN">
+        <input type="password" maxlength="4" id="cfg-pin" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="New 4-Digit PIN">
         <input type="text" id="cfg-sec-q" class="wifi-input" placeholder="Security Question">
         <input type="text" id="cfg-sec-a" class="wifi-input" placeholder="Security Answer">
       </div>
@@ -541,7 +541,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       </button>
     </div>
 
-    <!-- Firmware OTA Section -->
     <div class="ota-section" style="border-top: 2px dashed var(--border); padding-top: 14px;">
       <div class="setting-header"><span>⚡ Firmware Update</span></div>
       <button id="ota-btn" onclick="triggerOtaUpdate()" class="btn-update">
@@ -551,7 +550,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
 
     <div class="setting-group" style="border-top: 2px dashed var(--border); padding-top: 14px; margin-top: 14px;">
-      <div style="display: flex; gap: 8px;">
+      <div style="display: flex; gap: 8px; margin-bottom: 10px;">
         <button onclick="setPowerState('off')" class="btn-update" style="flex: 1; background: #ffebee; color: #c62828;">
           🌙 Sleep
         </button>
@@ -562,6 +561,10 @@ const char index_html[] PROGMEM = R"rawliteral(
           🔄 Reboot
         </button>
       </div>
+
+      <button onclick="triggerFactoryReset()" class="btn-update" style="background: #ffebee; color: #c62828; border-color: var(--red);">
+        💣 Factory Reset Device
+      </button>
     </div>
 
   </div>
@@ -670,16 +673,12 @@ let hasSetupWizardPrompted = false;
 let holdTimer = null;
 let repeatInterval = null;
 
-// Extended Flashcard Dataset (Lowercase, Uppercase, Numbers, Special Characters)
 const fcDataset = [
-  // Lowercase Letters
   {ch:'a', bits:1},  {ch:'b', bits:3},  {ch:'c', bits:9},  {ch:'d', bits:25}, {ch:'e', bits:17},
   {ch:'f', bits:11}, {ch:'g', bits:27}, {ch:'h', bits:19}, {ch:'i', bits:10}, {ch:'j', bits:26},
   {ch:'k', bits:5},  {ch:'l', bits:7},  {ch:'m', bits:13}, {ch:'n', bits:29}, {ch:'o', bits:21},
   {ch:'p', bits:15}, {ch:'q', bits:31}, {ch:'r', bits:23}, {ch:'s', bits:14}, {ch:'t', bits:30},
   {ch:'u', bits:37}, {ch:'v', bits:39}, {ch:'w', bits:58}, {ch:'x', bits:45}, {ch:'y', bits:61}, {ch:'z', bits:53},
-
-  // Uppercase Letters
   {ch:'A', bits:1,  prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'B', bits:3,  prefixBits:32, prefixName:'Dot 6 (⠠)'},
   {ch:'C', bits:9,  prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'D', bits:25, prefixBits:32, prefixName:'Dot 6 (⠠)'},
   {ch:'E', bits:17, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'F', bits:11, prefixBits:32, prefixName:'Dot 6 (⠠)'},
@@ -693,15 +692,11 @@ const fcDataset = [
   {ch:'U', bits:37, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'V', bits:39, prefixBits:32, prefixName:'Dot 6 (⠠)'},
   {ch:'W', bits:58, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'X', bits:45, prefixBits:32, prefixName:'Dot 6 (⠠)'},
   {ch:'Y', bits:61, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'Z', bits:53, prefixBits:32, prefixName:'Dot 6 (⠠)'},
-
-  // Numbers
   {ch:'1', bits:1,  prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'2', bits:3,  prefixBits:60, prefixName:'Num Ind # (⠼)'},
   {ch:'3', bits:9,  prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'4', bits:25, prefixBits:60, prefixName:'Num Ind # (⠼)'},
   {ch:'5', bits:17, prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'6', bits:11, prefixBits:60, prefixName:'Num Ind # (⠼)'},
   {ch:'7', bits:27, prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'8', bits:19, prefixBits:60, prefixName:'Num Ind # (⠼)'},
   {ch:'9', bits:10, prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'0', bits:26, prefixBits:60, prefixName:'Num Ind # (⠼)'},
-
-  // Special Characters
   {ch:'?', bits:38, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:'!', bits:22, prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
   {ch:'&', bits:47, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:',', bits:2,  prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
   {ch:'.', bits:50, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:';', bits:6,  prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
@@ -738,7 +733,6 @@ function updateBodyScrollLock() {
   }
 }
 
-// Wizard Functions
 function openWizardModal() {
   nextWizardStep(1);
   document.getElementById('wizard-modal').classList.add('active');
@@ -751,7 +745,7 @@ function closeWizardModal() {
 }
 
 function nextWizardStep(stepNum) {
-  for (let i = 1; i <= 5; i++) {
+  for (let i = 1; i <= 6; i++) {
     const stepEl = document.getElementById('wstep-' + i);
     const dotEl = document.getElementById('wdot-' + i);
     if (stepEl) stepEl.classList.remove('active');
@@ -768,6 +762,22 @@ function nextWizardStep(stepNum) {
 
 function prevWizardStep(stepNum) {
   nextWizardStep(stepNum);
+}
+
+function saveWizardSecurity() {
+  const pin = document.getElementById('w-pin-input').value;
+  const q = document.getElementById('w-sec-q-input').value;
+  const a = document.getElementById('w-sec-a-input').value;
+
+  if (pin.length !== 4 || !q || !a) {
+    alert('Please enter a valid 4-digit PIN, security question, and answer.');
+    return;
+  }
+
+  fetch(`/api/save_security?pin=${encodeURIComponent(pin)}&secQ=${encodeURIComponent(q)}&secA=${encodeURIComponent(a)}`)
+    .then(r => r.json())
+    .then(() => nextWizardStep(5))
+    .catch(() => nextWizardStep(5));
 }
 
 function updateSecurityConfigFromSettings() {
@@ -897,8 +907,23 @@ function submitForgotPinReset() {
     });
 }
 
-// Enforce PIN check on page load
 checkPinAuthOnLoad();
+
+function triggerFactoryReset() {
+  const confirmPin = prompt('⚠️ FACTORY RESET WARNING:\nThis will permanently erase all Wi-Fi credentials, PIN security, and memory.\n\nEnter your 4-digit PIN to confirm:');
+  if (!confirmPin) return;
+
+  fetch('/api/factory_reset?pin=' + encodeURIComponent(confirmPin))
+    .then(r => {
+      if (!r.ok) throw new Error('Incorrect PIN');
+      return r.json();
+    })
+    .then(d => {
+      alert('💣 ' + (d.status || 'Factory reset authorized. ESP32 is wiping data...'));
+      setTimeout(() => location.reload(), 3000);
+    })
+    .catch(err => alert('❌ Factory Reset failed: Incorrect PIN.'));
+}
 
 function connectWifiFromWizard() {
   const ssid = document.getElementById('w-wifi-ssid').value;
@@ -1294,7 +1319,6 @@ function connectWifi(){
     .then(d => { label.innerText = d.status; });
 }
 
-// ---------- Mobile Text Highlight & Character Selector ----------
 function updateVisualSelection(start, end) {
   currentSelStart = start;
   currentSelEnd = end;
@@ -1450,7 +1474,6 @@ textContainer.addEventListener('touchmove', (e) => {
   }
 }, { passive: false });
 
-// Universal Clipboard Copy Helper
 function fallbackCopyText(text, successCallback) {
   const ta = document.createElement('textarea');
   ta.value = text;
@@ -1705,6 +1728,22 @@ function updateDotsUI(){
   document.getElementById('dec-val').innerText=currentBits;
 }
 
+function updateWifiSignalUI(connected, rssi) {
+  const symbolEl = document.getElementById('sig-symbol');
+  const dbmLabel = document.getElementById('sig-dbm-label');
+
+  if (!connected || rssi <= -99) {
+    symbolEl.innerText = '📡';
+    dbmLabel.innerText = 'AP Mode';
+    return;
+  }
+
+  dbmLabel.innerText = rssi + ' dBm';
+
+  if (rssi >= -55) symbolEl.innerText = '🛜';
+  else symbolEl.innerText = '📶';
+}
+
 let currentBootId = null;
 
 function updateState(d){
@@ -1716,7 +1755,6 @@ function updateState(d){
     handleLiveTtsFeedback(d);
   }
 
-  // First Time Setup Auto Trigger
   if (d.setupDone === false && !hasSetupWizardPrompted) {
     hasSetupWizardPrompted = true;
     openWizardModal();
@@ -1724,6 +1762,9 @@ function updateState(d){
 
   currentBits = d.bits;
   updateDotsUI();
+
+  updateWifiSignalUI(d.wifiConnected, d.rssi);
+
   document.getElementById('lcd-line0').innerText = d.lcd0;
   document.getElementById('lcd-line1').innerText = d.lcd1;
   document.getElementById('char-preview').innerText = d.preview || '~';

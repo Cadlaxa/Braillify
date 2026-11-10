@@ -14,7 +14,7 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.5.3"
+#define FIRMWARE_VERSION "1.0.6.0"
 
 Preferences prefs;
 uint32_t bootId = 0;
@@ -28,6 +28,13 @@ LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 int lcdBrightness = 100;     // 0 - 100%
 int soundVolume = 100;       // 0 - 100%
 int ttsMode = 1;             // 0: OFF, 1: CHAR_AND_WORD, 2: WORD_ONLY, 3: FULL_TEXT
+
+// Custom 5x8 Pixel Wi-Fi Signal Bitmaps (For Physical LCD Only)
+byte wifiBar1[8] = { 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00000 }; // 1 Bar
+byte wifiBar2[8] = { 0b00000, 0b00000, 0b00000, 0b01110, 0b00000, 0b00000, 0b00100, 0b00000 }; // 2 Bars
+byte wifiBar3[8] = { 0b00000, 0b11111, 0b00000, 0b01110, 0b00000, 0b00000, 0b00100, 0b00000 }; // 3 Bars
+byte wifiBar4[8] = { 0b01110, 0b10001, 0b00000, 0b01110, 0b00000, 0b00000, 0b00100, 0b00000 }; // 4 Bars
+byte wifiAP[8]   = { 0b00100, 0b01101, 0b10101, 0b00100, 0b00100, 0b01110, 0b11111, 0b00000 }; // AP Antenna
 
 // Web Server & Captive Portal DNS
 WebServer server(80);
@@ -151,6 +158,7 @@ void moveCursorLeft();
 void moveCursorRight();
 void cycleMode();
 void updateLCDMode();
+void updateLCDWifiIcon();
 void saveLineToEEPROM();
 void loadLineFromEEPROM();
 void handleSpaceKeyDirect();
@@ -455,15 +463,29 @@ void scrollWindow() {
   if (windowStart < 0) windowStart = 0;
 }
 
+void updateLCDWifiIcon() {
+  lcd.setCursor(15, 0);
+  if (WiFi.status() == WL_CONNECTED) {
+    int rssi = WiFi.RSSI();
+    if (rssi >= -55) lcd.write(3);       // 4 Bars
+    else if (rssi >= -67) lcd.write(2);  // 3 Bars
+    else if (rssi >= -78) lcd.write(1);  // 2 Bars
+    else lcd.write(0);                   // 1 Bar
+  } else {
+    lcd.write(4);                        // AP Icon
+  }
+}
+
 void redrawLCDLine() {
   if (hasSelection()) {
     int selLen = selectEnd - selectStart;
     String selSub = fullBuffer.substring(selectStart, selectEnd);
     lcd.setCursor(0, 0);
     String l0 = "Sel(" + String(selLen) + "):" + selSub;
-    while (l0.length() < 16) l0 += " ";
-    if (l0.length() > 16) l0 = l0.substring(0, 16);
+    while (l0.length() < 15) l0 += " ";
+    if (l0.length() > 15) l0 = l0.substring(0, 15);
     lcd.print(l0);
+    updateLCDWifiIcon();
 
     lcd.setCursor(0, 1);
     String visible = "";
@@ -563,11 +585,12 @@ void cycleMode() {
 void updateLCDMode() {
   lcd.setCursor(0,0);
   switch(currentMode) {
-    case AUTO:    lcd.print("Mode: AUTO      "); break;
-    case TEXT:    lcd.print("Mode: Text      "); break;
-    case NUMBER:  lcd.print("Mode: Number    "); break;
-    case SPECIAL: lcd.print("Mode: Special   "); break;
+    case AUTO:    lcd.print("Mode: AUTO     "); break;
+    case TEXT:    lcd.print("Mode: Text     "); break;
+    case NUMBER:  lcd.print("Mode: Number   "); break;
+    case SPECIAL: lcd.print("Mode: Special  "); break;
   }
+  updateLCDWifiIcon();
 }
 
 void setupLittleFS() {
@@ -833,18 +856,17 @@ struct WifiCred {
 std::vector<WifiCred> knownWifis;
 
 void loadSecurityPreferences() {
-  prefs.begin("settings", true); // Read-only mode
+  prefs.begin("settings", true);
   devicePin   = prefs.getString("pin", "1234");
   secQuestion = prefs.getString("secQ", "What is your pet's name?");
   secAnswer   = prefs.getString("secA", "braille");
   prefs.end();
 }
 
-// Helper: Persist Security Config to Preferences
 bool saveSecurityPreferences(const String& newPin, const String& newQ, const String& newA) {
   if (newPin.length() != 4 || newQ.length() == 0 || newA.length() == 0) return false;
 
-  prefs.begin("settings", false); // Read-write mode
+  prefs.begin("settings", false);
   devicePin = newPin;
   secQuestion = newQ;
   secAnswer = newA;
@@ -858,7 +880,7 @@ bool saveSecurityPreferences(const String& newPin, const String& newQ, const Str
 
 void handleApiVerifyPin() {
   if (server.hasArg("pin")) {
-    loadSecurityPreferences(); // Refresh from Preferences
+    loadSecurityPreferences();
     if (server.arg("pin") == devicePin) {
       connectionTone();
       server.send(200, "application/json", "{\"status\":\"success\",\"msg\":\"Connected to Braillify!\"}");
@@ -910,6 +932,39 @@ void handleApiSaveSecurity() {
     }
   }
   server.send(400, "application/json", "{\"status\":\"error\",\"msg\":\"Invalid configuration parameters\"}");
+}
+
+void handleApiFactoryReset() {
+  loadSecurityPreferences();
+  if (server.hasArg("pin") && server.arg("pin") == devicePin) {
+    server.send(200, "application/json", "{\"status\":\"Factory reset authorized. Resetting ESP32...\"}");
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(" FACTORY RESET ");
+    lcd.setCursor(0, 1);
+    lcd.print(" Erasing data...");
+    errorTone();
+
+    prefs.begin("settings", false);
+    prefs.clear();
+    prefs.end();
+
+    prefs.begin("wifi", false);
+    prefs.clear();
+    prefs.end();
+
+    if (LittleFS.exists("/buffer.txt")) LittleFS.remove("/buffer.txt");
+    if (LittleFS.exists("/wifis.txt")) LittleFS.remove("/wifis.txt");
+    LittleFS.format();
+
+    WiFi.disconnect(true, true);
+
+    smartDelay(2000);
+    ESP.restart();
+    return;
+  }
+  server.send(401, "application/json", "{\"status\":\"error\",\"msg\":\"Incorrect PIN for factory reset!\"}");
 }
 
 void loadKnownWifis() {
@@ -1260,7 +1315,10 @@ void getSystemStateJson(String &jsonOut) {
   }
   jsonBrailleArray += "]";
 
-  if (WiFi.status() == WL_CONNECTED) {
+  bool connected = (WiFi.status() == WL_CONNECTED);
+  int currentRssi = connected ? WiFi.RSSI() : -99;
+
+  if (connected) {
     String currentSSID = WiFi.SSID();
     if (currentSSID.length() == 0) currentSSID = wifiSSID;
     wifiStatusMsg = "Connected to: " + currentSSID;
@@ -1283,6 +1341,8 @@ void getSystemStateJson(String &jsonOut) {
   jsonOut += "\"fullText\":\"" + safeFullText + "\",";
   jsonOut += "\"brailleArray\":" + jsonBrailleArray + ",";
   jsonOut += "\"wifiStatus\":\"" + wifiStatusMsg + "\",";
+  jsonOut += "\"wifiConnected\":" + String(connected ? "true" : "false") + ",";
+  jsonOut += "\"rssi\":" + String(currentRssi) + ",";
   jsonOut += "\"brightness\":" + String(lcdBrightness) + ",";
   jsonOut += "\"volume\":" + String(reportedVolume) + ",";
   jsonOut += "\"feedbackMode\":" + String((int)feedbackMode);
@@ -1469,6 +1529,13 @@ void setup() {
 
   lcd.init();
   lcd.backlight();
+
+  // Create Custom Wi-Fi Bitmaps (Indexes 0..4) on physical LCD
+  lcd.createChar(0, wifiBar1);
+  lcd.createChar(1, wifiBar2);
+  lcd.createChar(2, wifiBar3);
+  lcd.createChar(3, wifiBar4);
+  lcd.createChar(4, wifiAP);
   lcd.clear();
 
   keypad.setHoldTime(holdDelay);
@@ -1519,6 +1586,7 @@ void setup() {
   server.on("/api/get_sec_question", handleApiGetSecQuestion);
   server.on("/api/reset_pin", handleApiResetPin);
   server.on("/api/save_security", handleApiSaveSecurity);
+  server.on("/api/factory_reset", handleApiFactoryReset);
 
   server.on("/generate_204", handleCaptivePortal);
   server.on("/gen_204", handleCaptivePortal);
