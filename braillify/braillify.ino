@@ -14,7 +14,7 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.6.0"
+#define FIRMWARE_VERSION "1.0.6.1"
 
 Preferences prefs;
 uint32_t bootId = 0;
@@ -42,15 +42,15 @@ DNSServer dnsServer;
 const byte DNS_PORT = 53;
 const IPAddress apIP(192, 168, 4, 1);
 
-// Connection State Management
-bool isConnecting = false;
-unsigned long wifiConnectStart = 0;
-const unsigned long WIFI_TIMEOUT_MS = 12000;
-
 // Wi-Fi Configuration State
 String wifiSSID = "";
 String wifiPass = "";
 String wifiStatusMsg = "AP Mode Active (192.168.4.1)";
+bool isConnecting = false;
+bool wifiConnected = false; 
+unsigned long wifiConnectStart = 0;
+const unsigned long WIFI_TIMEOUT_MS = 10000;
+int autoConnectIndex = -1;
 
 String devicePin = "";
 String secQuestion = "";
@@ -176,6 +176,7 @@ void updateFirmwareFromGitHub(const String& binUrl);
 void applyBrightness(int percent);
 byte charToBraille(char c);
 void handleCaptivePortal();
+void autoConnectWifi();
 void checkWifiStatus();
 
 // Text Selection Helpers
@@ -1033,19 +1034,40 @@ void startWifiConnection(const String& ssid, const String& pass) {
   WiFi.disconnect(false);
   delay(100);
 
+  WiFi.setAutoReconnect(true);
   WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
   wifiStatusMsg = "Connecting to " + wifiSSID + "...";
   wifiConnectStart = millis();
   isConnecting = true;
 }
 
-void autoConnectWifi() {
-  loadKnownWifis();
+void startNextAutoConnect() {
   if (knownWifis.empty()) {
     wifiStatusMsg = "AP Mode Active (192.168.4.1)";
+    isConnecting = false;
+    autoConnectIndex = -1;
     return;
   }
-  startWifiConnection(knownWifis.back().ssid, knownWifis.back().pass);
+  
+  autoConnectIndex++;
+  if (autoConnectIndex >= (int)knownWifis.size()) {
+    // Attempted all saved networks; none were reachable
+    autoConnectIndex = -1;
+    isConnecting = false;
+    WiFi.disconnect(false);
+    wifiStatusMsg = "AP Mode Active (Saved Wi-Fi unavailable)";
+    return;
+  }
+  
+  // Connect through saved networks starting from newest to oldest
+  int targetIdx = knownWifis.size() - 1 - autoConnectIndex;
+  startWifiConnection(knownWifis[targetIdx].ssid, knownWifis[targetIdx].pass);
+}
+
+void autoConnectWifi() {
+  loadKnownWifis();
+  autoConnectIndex = -1;
+  startNextAutoConnect();
 }
 
 void checkWifiStatus() {
@@ -1053,14 +1075,34 @@ void checkWifiStatus() {
 
   if (WiFi.status() == WL_CONNECTED) {
     isConnecting = false;
+    autoConnectIndex = -1;
     wifiStatusMsg = "Connected to: " + WiFi.SSID();
+    wifiConnected = true;
+
+    updateLCDMode();
+    redrawLCDLine();
+    return;
   } 
-  else if (WiFi.status() == WL_CONNECT_FAILED || 
-           WiFi.status() == WL_NO_SSID_AVAIL || 
-           (millis() - wifiConnectStart >= WIFI_TIMEOUT_MS)) {
-    isConnecting = false;
-    WiFi.disconnect(false);
-    wifiStatusMsg = "Failed to connect to " + wifiSSID;
+
+  // Allow a 2.5-second grace period for ESP32 Wi-Fi driver to reset state after WiFi.begin()
+  bool isTimedOut = (millis() - wifiConnectStart >= WIFI_TIMEOUT_MS);
+  bool hasFailed = (millis() - wifiConnectStart > 2500) && 
+                   (WiFi.status() == WL_CONNECT_FAILED || WiFi.status() == WL_NO_SSID_AVAIL);
+
+  if (isTimedOut || hasFailed) {
+    if (autoConnectIndex >= 0) {
+      WiFi.disconnect(false);
+      delay(100);
+      startNextAutoConnect();
+    } else {
+      isConnecting = false;
+      wifiConnected = false;
+      WiFi.disconnect(false);
+      wifiStatusMsg = "Failed to connect";
+      
+      updateLCDMode();
+      redrawLCDLine();
+    }
   }
 }
 
@@ -1558,15 +1600,7 @@ void setup() {
   dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
   dnsServer.start(DNS_PORT, "*", apIP);
 
-  prefs.begin("wifi", false);
-  wifiSSID = prefs.getString("ssid", "");
-  wifiPass = prefs.getString("pass", "");
-  prefs.end();
-
-  if (wifiSSID.length() > 0) {
-    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
-    wifiStatusMsg = "Connecting to " + wifiSSID + "...";
-  }
+  autoConnectWifi();
 
   server.on("/", handleCaptivePortal);
   server.on("/api/state", handleApiState);
@@ -1598,7 +1632,6 @@ void setup() {
   server.on("/connecttest.txt", handleCaptivePortal);
   server.on("/redirect", handleCaptivePortal);
   server.on("/canonical.html", handleCaptivePortal);
-  
   
   server.on("/api/ota_update", HTTP_GET, []() {
     String defaultUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/firmware.bin";

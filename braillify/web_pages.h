@@ -33,23 +33,34 @@ const char index_html[] PROGMEM = R"rawliteral(
     .header-title .sub { font-size: 0.7rem; color: var(--orange-dark); font-weight: bold; }
     .header-btns { display: flex; gap: 6px; align-items: center; }
 
-    .modal-trigger-btn { background: #e8f5e9; border: 2px solid var(--border); color: #2e7d32; font-size: 0.75rem; font-weight: bold; padding: 6px 10px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 4px; box-shadow: 2px 2px 0px var(--border); transition: all .05s; }
+    .modal-trigger-btn { background: #e8f5e9; border: 2px solid var(--border); color: #2e7d32; font-size: 0.75rem; font-weight: bold; padding: 6px 6px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 4px; box-shadow: 2px 2px 0px var(--border); transition: all .05s; }
     .modal-trigger-btn:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
-    .wifi-btn { background: var(--blue-light); color: var(--blue); }
 
     /* Top Bar Signal Badge */
-    .wifi-signal-badge { display: inline-flex; align-items: center; gap: 4px; background: #ffffff; border: 1.5px solid var(--border); padding: 2px 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 800; color: var(--blue); }
+    .wifi-signal-badge { display: inline-flex; align-items: center; gap: 4px; background: #ffffff; border: 1.5px solid var(--border); padding: 6px 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 800; color: var(--blue); cursor: pointer; box-shadow: 2px 2px 0px var(--border); transition: all .05s; }
+    .wifi-signal-badge:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
     .signal-icon-symbol { font-size: 0.95rem; line-height: 1; vertical-align: middle; }
 
     /* Modals */
     .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(17,24,39,0.5); backdrop-filter: blur(3px); display: none; justify-content: center; align-items: center; z-index: 999; padding: 15px; overflow-y: auto; -webkit-overflow-scrolling: touch}
     .modal-overlay.active { display: flex; }
-    .modal-content { width: 100%; max-width: 420px; background: #ffffff; border: 3px solid var(--border); border-radius: 12px; box-shadow: 8px 8px 0px var(--border); padding: 20px; position: relative; animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); max-height: 80vh; overflow-y: auto;}
+    .modal-content { width: 100%; max-width: 440px; background: #ffffff; border: 3px solid var(--border); border-radius: 12px; box-shadow: 8px 8px 0px var(--border); padding: 20px; position: relative; animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); max-height: 85vh; overflow-y: auto;}
     @keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
-    .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border); padding-bottom: 10px; margin-bottom: 14px; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border); padding-bottom: 10px; margin-bottom: 12px; }
     .modal-title { font-size: 1.1rem; font-weight: 900; color: var(--blue); display: flex; align-items: center; gap: 6px; }
     .modal-close-btn { background: none; border: none; font-size: 1.5rem; font-weight: 900; color: var(--text); cursor: pointer; line-height: 1; padding: 0 4px; }
+
+    /* Settings Tab Bar Navigation */
+    .settings-tab-nav { display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 16px; padding-bottom: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .settings-tab-btn { flex: 1 1 0px; min-width: 0; background: var(--bg); border: 2px solid var(--border); border-radius: 8px; padding: 6px 2px; font-size: 0.65rem; font-weight: 800; color: var(--text); cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; box-shadow: 2px 2px 0px var(--border); transition: all 0.05s; white-space: normal; text-align: center; word-break: break-word; line-height: 1.1; }
+    .settings-tab-btn:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
+    .settings-tab-btn .tab-icon { font-size: 1rem; line-height: 1; }
+    .settings-tab-btn.active { background: var(--blue-light); color: var(--blue); border-color: var(--blue); box-shadow: none; transform: translate(1px, 1px); }
+
+    .settings-tab-pane { display: none; }
+    .settings-tab-pane.active { display: block; animation: fadeIn 0.15s ease-in-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
 
     /* Setup Wizard Steps */
     .wizard-progress { display: flex; justify-content: center; gap: 6px; margin-bottom: 16px; }
@@ -90,7 +101,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     .fc-btn { flex: 1; background: #fff3e0; border: 2px solid var(--border); color: var(--orange-dark); font-size: 0.8rem; font-weight: 800; padding: 8px; border-radius: 6px; cursor: pointer; box-shadow: 2px 2px 0px var(--border); text-align: center; transition: all .05s; }
     .fc-btn:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
 
-    .wifi-list { max-height: 160px; overflow-y: auto; border: 2px solid var(--border); border-radius: 8px; margin-bottom: 12px; background: var(--bg); }
+    .wifi-list { max-height: 140px; overflow-y: auto; border: 2px solid var(--border); border-radius: 8px; margin-bottom: 12px; background: var(--bg); }
     .wifi-item { padding: 8px 12px; border-bottom: 1px solid #d0d7de; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-weight: 700; font-size: 0.85rem; }
     .wifi-item:last-child { border-bottom: none; }
     .wifi-item:hover { background: var(--blue-light); }
@@ -154,7 +165,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     .dot-key-sub { font-size: 0.6rem; color: #57606a; font-weight: 700; }
     .footer { text-align: center; font-size: .7rem; font-weight: bold; color: #57606a; margin-top: 14px; border-top: 2px solid var(--border); padding-top: 8px; }
 
-    .ota-section { margin-top: 12px; text-align: center; }
+    .ota-section { text-align: center; }
     .btn-update { width: 100%; background: #e8f5e9; border: 2px solid var(--border); color: #2e7d32; font-size: 0.85rem; font-weight: 800; padding: 10px; border-radius: 8px; cursor: pointer; box-shadow: 2px 2px 0px var(--border); transition: all .05s; display: flex; align-items: center; justify-content: center; gap: 6px; }
     .btn-update:active { transform: translate(1px, 1px); box-shadow: 0px 0px 0px var(--border); }
     .btn-update:disabled { opacity: 0.6; cursor: not-allowed; background: #d0d7de; color: #57606a; }
@@ -170,11 +181,10 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="sub">HARDWARE TRANSLATOR</div>
     </div>
     <div class="header-btns">
-      <div class="wifi-signal-badge" id="wifi-signal-badge" title="Wi-Fi Signal Strength">
+      <div class="wifi-signal-badge" id="wifi-signal-badge" title="Click to Open Wi-Fi Settings" onclick="openSettingsModal('wifi')">
         <span class="signal-icon-symbol" id="sig-symbol">📡</span>
         <span id="sig-dbm-label">--</span>
       </div>
-      <button class="modal-trigger-btn wifi-btn" onclick="openWifiModal()">📶 Wi-Fi</button>
       <button class="modal-trigger-btn" onclick="openFlashcardModal()">🎓 Practice</button>
     </div>
   </div>
@@ -286,8 +296,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 
   <div class="footer">ESP32 BRAILLIFY // AP: 192.168.4.1 // Local: http://braillify.local</div>
   
-  <div class="ota-section">
-    <button onclick="openSettingsModal()" class="btn-update" style="background: var(--blue-light); color: var(--blue);">
+  <div class="ota-section" style="margin-top: 12px;">
+    <button onclick="openSettingsModal('sound')" class="btn-update" style="background: var(--blue-light); color: var(--blue);">
       ⚙️ Device Settings
     </button>
   </div>
@@ -479,7 +489,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 </div>
 
-<!-- Device Settings Modal -->
+<!-- REVAMPED TABBED DEVICE SETTINGS MODAL -->
 <div class="modal-overlay" id="settings-modal" onclick="handleModalBackdropClick(event)">
   <div class="modal-content">
     <div class="modal-header">
@@ -487,84 +497,146 @@ const char index_html[] PROGMEM = R"rawliteral(
       <button class="modal-close-btn" onclick="closeSettingsModal()">&times;</button>
     </div>
 
-    <div class="setting-group">
-      <div class="setting-header">
-        <span>🗣️ TTS Speech Mode</span>
-      </div>
-      <select id="tts-mode-select" class="setting-select" onchange="setTtsMode(this.value)">
-        <option value="1">Mode 1: Speak Char + Full Word on Space</option>
-        <option value="2">Mode 2: Speak Full Word Only (after space)</option>
-        <option value="3">Mode 3: Speak Full Buffer Line</option>
-        <option value="0">Mode 0: Web Speech TTS Disabled</option>
-      </select>
-    </div>
-
-    <div class="setting-group">
-      <div class="setting-header">
-        <span>⚡ Speech Rate / Speed</span>
-        <span id="speech-rate-label">1.0x</span>
-      </div>
-      <input type="range" id="speech-rate-slider" min="0.5" max="2.0" step="0.1" value="1.0" class="setting-slider" oninput="document.getElementById('speech-rate-label').innerText=this.value+'x'">
-    </div>
-
-    <div class="setting-group">
-      <div class="setting-header">
-        <span>☀️ LCD Backlight Brightness</span>
-        <span id="brightness-val-label">100%</span>
-      </div>
-      <input type="range" id="brightness-slider" min="0" max="100" value="100" class="setting-slider" onchange="setBrightness(this.value)" oninput="document.getElementById('brightness-val-label').innerText=this.value+'%'">
-    </div>
-
-    <div class="setting-group" style="margin-bottom: 20px;">
-      <div class="setting-header">
-        <span>🔊 Buzzer Volume</span>
-        <span id="volume-val-label">100%</span>
-      </div>
-      <input type="range" id="volume-slider" min="0" max="100" value="100" class="setting-slider" onchange="setVolume(this.value)" oninput="document.getElementById('volume-val-label').innerText = (this.value > 0 ? this.value + '%' : 'MUTED (0%)')">
-    </div>
-
-    <div class="setting-group" style="margin-bottom: 16px;">
-      <button onclick="closeSettingsModal(); openWizardModal();" class="btn-update" style="background: var(--blue-light); color: var(--blue);">
-        🪄 Re-run Setup Wizard
+    <!-- Category Icon Tabs Nav -->
+    <div class="settings-tab-nav">
+      <button class="settings-tab-btn active" id="tab-btn-sound" onclick="switchSettingsTab('sound')">
+        <span class="tab-icon">🔊</span>
+        <span>Sound & Screen</span>
+      </button>
+      <button class="settings-tab-btn" id="tab-btn-tts" onclick="switchSettingsTab('tts')">
+        <span class="tab-icon">🗣️</span>
+        <span>TTS</span>
+      </button>
+      <button class="settings-tab-btn" id="tab-btn-wifi" onclick="switchSettingsTab('wifi')">
+        <span class="tab-icon">📶</span>
+        <span>Wi-Fi</span>
+      </button>
+      <button class="settings-tab-btn" id="tab-btn-updates" onclick="switchSettingsTab('updates')">
+        <span class="tab-icon">⚡</span>
+        <span>Updates</span>
+      </button>
+      <button class="settings-tab-btn" id="tab-btn-system" onclick="switchSettingsTab('system')">
+        <span class="tab-icon">🔐</span>
+        <span>System</span>
       </button>
     </div>
 
-    <div class="setting-group" style="border-top: 2px dashed var(--border); padding-top: 14px; margin-top: 14px;">
-      <div class="setting-header"><span>🔐 Security & Authentication</span></div>
-      <div class="wifi-input-group" style="margin-bottom: 8px;">
-        <input type="password" maxlength="4" id="cfg-pin" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="New 4-Digit PIN">
-        <input type="text" id="cfg-sec-q" class="wifi-input" placeholder="Security Question">
-        <input type="text" id="cfg-sec-a" class="wifi-input" placeholder="Security Answer">
+    <!-- TAB 1: Sound & Display -->
+    <div class="settings-tab-pane active" id="tab-pane-sound">
+      <div class="setting-group">
+        <div class="setting-header">
+          <span>☀️ LCD Backlight Brightness</span>
+          <span id="brightness-val-label">100%</span>
+        </div>
+        <input type="range" id="brightness-slider" min="0" max="100" value="100" class="setting-slider" onchange="setBrightness(this.value)" oninput="document.getElementById('brightness-val-label').innerText=this.value+'%'">
       </div>
-      <button onclick="updateSecurityConfigFromSettings()" class="btn-update" style="background: #e8f5e9; color: #2e7d32;">
-        💾 Save Security Preferences
-      </button>
+
+      <div class="setting-group" style="margin-bottom: 8px;">
+        <div class="setting-header">
+          <span>🔊 Buzzer Volume</span>
+          <span id="volume-val-label">100%</span>
+        </div>
+        <input type="range" id="volume-slider" min="0" max="100" value="100" class="setting-slider" onchange="setVolume(this.value)" oninput="document.getElementById('volume-val-label').innerText = (this.value > 0 ? this.value + '%' : 'MUTED (0%)')">
+      </div>
     </div>
 
-    <div class="ota-section" style="border-top: 2px dashed var(--border); padding-top: 14px;">
-      <div class="setting-header"><span>⚡ Firmware Update</span></div>
-      <button id="ota-btn" onclick="triggerOtaUpdate()" class="btn-update">
-        ⚡ Check & Update Firmware (GitHub OTA)
-      </button>
-      <div id="ota-status"></div>
+    <!-- TAB 2: TTS Speech -->
+    <div class="settings-tab-pane" id="tab-pane-tts">
+      <div class="setting-group">
+        <div class="setting-header">
+          <span>🗣️ Speech Mode</span>
+        </div>
+        <select id="tts-mode-select" class="setting-select" onchange="setTtsMode(this.value)">
+          <option value="1">Mode 1: Speak Char + Full Word on Space</option>
+          <option value="2">Mode 2: Speak Full Word Only (after space)</option>
+          <option value="3">Mode 3: Speak Full Buffer Line</option>
+          <option value="0">Mode 0: Web Speech TTS Disabled</option>
+        </select>
+      </div>
+
+      <div class="setting-group" style="margin-bottom: 8px;">
+        <div class="setting-header">
+          <span>⚡ Speech Rate / Speed</span>
+          <span id="speech-rate-label">1.0x</span>
+        </div>
+        <input type="range" id="speech-rate-slider" min="0.5" max="2.0" step="0.1" value="1.0" class="setting-slider" oninput="document.getElementById('speech-rate-label').innerText=this.value+'x'">
+      </div>
     </div>
 
-    <div class="setting-group" style="border-top: 2px dashed var(--border); padding-top: 14px; margin-top: 14px;">
-      <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-        <button onclick="setPowerState('off')" class="btn-update" style="flex: 1; background: #ffebee; color: #c62828;">
-          🌙 Sleep
+    <!-- TAB 3: Wi-Fi Settings -->
+    <div class="settings-tab-pane" id="tab-pane-wifi">
+      <div class="wifi-status-info" id="wifi-status-label">AP Mode Active (192.168.4.1)</div>
+
+      <div class="section-title" style="margin-bottom: 6px;">Saved Networks</div>
+      <div class="wifi-list" id="saved-wifi-list" style="max-height: 120px; margin-bottom: 12px;">
+        <div class="wifi-item" style="justify-content:center;color:#57606a;">Loading saved networks...</div>
+      </div>
+
+      <div class="fc-actions" style="margin-bottom:10px;">
+        <button class="fc-btn" onclick="scanWifiNetworks()">🔍 Scan Available Wi-Fi</button>
+      </div>
+
+      <div class="wifi-list" id="wifi-list">
+        <div class="wifi-item" style="justify-content:center;color:#57606a;">Click Scan to search networks</div>
+      </div>
+
+      <div class="wifi-input-group">
+        <input type="text" id="wifi-ssid" class="wifi-input" placeholder="Wi-Fi SSID (Network Name)">
+        <input type="password" id="wifi-pass" class="wifi-input" placeholder="Wi-Fi Password">
+      </div>
+
+      <div class="fc-actions">
+        <button class="fc-btn" style="background:#e8f5e9;color:#2e7d32;" onclick="connectWifi()">Save & Connect</button>
+      </div>
+    </div>
+
+    <!-- TAB 4: Firmware Updates -->
+    <div class="settings-tab-pane" id="tab-pane-updates">
+      <div class="ota-section">
+        <div class="setting-header" style="margin-bottom:8px;"><span>⚡ Firmware Update</span></div>
+        <p style="font-size: 0.8rem; color: #57606a; margin-bottom: 14px; font-weight: 600;">Check GitHub releases for the latest firmware binary over Wi-Fi.</p>
+        <button id="ota-btn" onclick="triggerOtaUpdate()" class="btn-update">
+          ⚡ Check & Update Firmware (GitHub OTA)
         </button>
-        <button onclick="setPowerState('on')" class="btn-update" style="flex: 1; background: #e8f5e9; color: #2e7d32;">
-          ☀️ Turn On
-        </button>
-        <button onclick="rebootEsp32()" class="btn-update" style="flex: 1; background: #fff3e0; color: #e65100;">
-          🔄 Reboot
+        <div id="ota-status"></div>
+      </div>
+    </div>
+
+    <!-- TAB 5: Security & System -->
+    <div class="settings-tab-pane" id="tab-pane-system">
+      <div class="setting-group" style="margin-bottom: 16px;">
+        <div class="setting-header" style="margin-bottom: 8px;"><span>🔐 Security & Authentication</span></div>
+        <div class="wifi-input-group" style="margin-bottom: 8px;">
+          <input type="password" maxlength="4" id="cfg-pin" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="New 4-Digit PIN">
+          <input type="text" id="cfg-sec-q" class="wifi-input" placeholder="Security Question">
+          <input type="text" id="cfg-sec-a" class="wifi-input" placeholder="Security Answer">
+        </div>
+        <button onclick="updateSecurityConfigFromSettings()" class="btn-update" style="background: #e8f5e9; color: #2e7d32;">
+          💾 Save Security Preferences
         </button>
       </div>
 
-      <button onclick="triggerFactoryReset()" class="btn-update" style="background: #ffebee; color: #c62828; border-color: var(--red);">
-        💣 Factory Reset Device
-      </button>
+      <div class="setting-group" style="border-top: 2px dashed var(--border); padding-top: 14px; margin-top: 14px;">
+        <button onclick="closeSettingsModal(); openWizardModal();" class="btn-update" style="background: var(--blue-light); color: var(--blue); margin-bottom: 12px;">
+          🪄 Re-run Setup Wizard
+        </button>
+
+        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+          <button onclick="setPowerState('off')" class="btn-update" style="flex: 1; background: #ffebee; color: #c62828;">
+            🌙 Sleep
+          </button>
+          <button onclick="setPowerState('on')" class="btn-update" style="flex: 1; background: #e8f5e9; color: #2e7d32;">
+            ☀️ Turn On
+          </button>
+          <button onclick="rebootEsp32()" class="btn-update" style="flex: 1; background: #fff3e0; color: #e65100;">
+            🔄 Reboot
+          </button>
+        </div>
+
+        <button onclick="triggerFactoryReset()" class="btn-update" style="background: #ffebee; color: #c62828; border-color: var(--red);">
+          💣 Factory Reset Device
+        </button>
+      </div>
     </div>
 
   </div>
@@ -591,40 +663,6 @@ const char index_html[] PROGMEM = R"rawliteral(
     <div class="fc-actions">
       <button class="fc-btn" onclick="toggleFlashcardHint()">Toggle Hint</button>
       <button class="fc-btn" onclick="nextFlashcardTarget()">Skip / Next</button>
-    </div>
-  </div>
-</div>
-
-<!-- Wi-Fi Setup Modal -->
-<div class="modal-overlay" id="wifi-modal" onclick="handleModalBackdropClick(event)">
-  <div class="modal-content">
-    <div class="modal-header">
-      <div class="modal-title">📶 Wi-Fi Settings</div>
-      <button class="modal-close-btn" onclick="closeWifiModal()">&times;</button>
-    </div>
-    
-    <div class="wifi-status-info" id="wifi-status-label">AP Mode Active (192.168.4.1)</div>
-
-    <div class="section-title" style="margin-bottom: 6px;">Saved Networks</div>
-    <div class="wifi-list" id="saved-wifi-list" style="max-height: 100px; margin-bottom: 12px;">
-      <div class="wifi-item" style="justify-content:center;color:#57606a;">Loading saved networks...</div>
-    </div>
-
-    <div class="fc-actions" style="margin-bottom:10px;">
-      <button class="fc-btn" onclick="scanWifiNetworks()">🔍 Scan Available Wi-Fi</button>
-    </div>
-
-    <div class="wifi-list" id="wifi-list">
-      <div class="wifi-item" style="justify-content:center;color:#57606a;">Click Scan to search networks</div>
-    </div>
-
-    <div class="wifi-input-group">
-      <input type="text" id="wifi-ssid" class="wifi-input" placeholder="Wi-Fi SSID (Network Name)">
-      <input type="password" id="wifi-pass" class="wifi-input" placeholder="Wi-Fi Password">
-    </div>
-
-    <div class="fc-actions">
-      <button class="fc-btn" style="background:#e8f5e9;color:#2e7d32;" onclick="connectWifi()">Save & Connect</button>
     </div>
   </div>
 </div>
@@ -1025,15 +1063,10 @@ function checkFlashcardAnswer(d) {
   lastEvaluatedTextLen = currentLen;
 }
 
-function openWifiModal(){ 
-  document.getElementById('wifi-modal').classList.add('active'); 
-  updateBodyScrollLock();
-  loadSavedWifis();
-  scanWifiNetworks();
-}
-
 function loadSavedWifis() {
   const listEl = document.getElementById('saved-wifi-list');
+  if (!listEl) return;
+
   fetch('/api/wifi/saved')
     .then(async res => {
       if (!res.ok) throw new Error('HTTP Status ' + res.status);
@@ -1053,8 +1086,10 @@ function loadSavedWifis() {
         const item = document.createElement('div');
         item.className = 'wifi-item';
         item.innerHTML = `
-          <span>${net.ssid}</span>
-          <div style="display:flex; gap:6px;">
+          <div style="flex:1; cursor:pointer;" onclick="connectSavedWifi('${net.ssid}', '${net.pass}')">
+            <span style="font-weight:800;">${net.ssid}</span>
+          </div>
+          <div style="display:flex; gap:4px;" onclick="event.stopPropagation()">
             <button class="action-btn" style="padding:2px 6px; font-size:0.7rem;" onclick="editSavedWifi('${net.ssid}', '${net.pass}')">✏️ Edit</button>
             <button class="action-btn" style="padding:2px 6px; font-size:0.7rem; background:#ffebee; color:#c62828;" onclick="forgetWifi('${net.ssid}')">🗑️ Forget</button>
           </div>
@@ -1066,6 +1101,12 @@ function loadSavedWifis() {
       console.error('[Wi-Fi Load Error]', err);
       listEl.innerHTML = '<div class="wifi-item" style="justify-content:center;color:red;">Failed to load saved networks</div>';
     });
+}
+
+function connectSavedWifi(ssid, pass) {
+  document.getElementById('wifi-ssid').value = ssid;
+  document.getElementById('wifi-pass').value = pass;
+  connectWifi();
 }
 
 function editSavedWifi(ssid, pass) {
@@ -1081,14 +1122,25 @@ function forgetWifi(ssid) {
   }
 }
 
-function closeWifiModal(){ 
-  document.getElementById('wifi-modal').classList.remove('active'); 
-  updateBodyScrollLock();
-}
-
 let currentFeedbackMode = 0;
 
-function openSettingsModal(){ 
+function switchSettingsTab(tabId) {
+  document.querySelectorAll('.settings-tab-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.settings-tab-pane').forEach(pane => pane.classList.remove('active'));
+
+  const targetBtn = document.getElementById('tab-btn-' + tabId);
+  const targetPane = document.getElementById('tab-pane-' + tabId);
+
+  if (targetBtn) targetBtn.classList.add('active');
+  if (targetPane) targetPane.classList.add('active');
+
+  if (tabId === 'wifi') {
+    loadSavedWifis();
+    scanWifiNetworks();
+  }
+}
+
+function openSettingsModal(defaultTab = 'sound'){ 
   document.getElementById('brightness-slider').value = currentBrightness;
   document.getElementById('brightness-val-label').innerText = currentBrightness + '%';
   
@@ -1097,6 +1149,9 @@ function openSettingsModal(){
   document.getElementById('volume-val-label').innerText = (activeVol > 0) ? activeVol + '%' : 'MUTED (0%)';
   
   document.getElementById('tts-mode-select').value = currentTtsMode;
+  
+  switchSettingsTab(defaultTab);
+  
   document.getElementById('settings-modal').classList.add('active'); 
   updateBodyScrollLock();
 }
@@ -1259,7 +1314,6 @@ function handleFileSelect(e) {
 
 function handleModalBackdropClick(e){
   if(e.target.id === 'flashcard-modal') closeFlashcardModal();
-  if(e.target.id === 'wifi-modal') closeWifiModal();
   if(e.target.id === 'camera-modal') closeCameraModal();
   if(e.target.id === 'settings-modal') closeSettingsModal();
 }
