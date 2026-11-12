@@ -858,9 +858,9 @@ std::vector<WifiCred> knownWifis;
 
 void loadSecurityPreferences() {
   prefs.begin("settings", true);
-  devicePin   = prefs.getString("pin", "1234");
-  secQuestion = prefs.getString("secQ", "What is your pet's name?");
-  secAnswer   = prefs.getString("secA", "braille");
+  devicePin   = prefs.getString("pin", "");
+  secQuestion = prefs.getString("secQ", "");
+  secAnswer   = prefs.getString("secA", "");
   prefs.end();
 }
 
@@ -880,8 +880,12 @@ bool saveSecurityPreferences(const String& newPin, const String& newQ, const Str
 }
 
 void handleApiVerifyPin() {
+  loadSecurityPreferences();
+  if (devicePin.length() == 0) {
+    server.send(200, "application/json", "{\"status\":\"success\",\"msg\":\"Connected to Braillify!\"}");
+    return;
+  }
   if (server.hasArg("pin")) {
-    loadSecurityPreferences();
     if (server.arg("pin") == devicePin) {
       connectionTone();
       server.send(200, "application/json", "{\"status\":\"success\",\"msg\":\"Connected to Braillify!\"}");
@@ -1034,7 +1038,7 @@ void startWifiConnection(const String& ssid, const String& pass) {
   WiFi.disconnect(false);
   delay(100);
 
-  WiFi.setAutoReconnect(true);
+  WiFi.setAutoReconnect(false);
   WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
   wifiStatusMsg = "Connecting to " + wifiSSID + "...";
   wifiConnectStart = millis();
@@ -1070,11 +1074,34 @@ void autoConnectWifi() {
   startNextAutoConnect();
 }
 
-void checkWifiStatus() {
-  if (!isConnecting) return;
+unsigned long wifiLostStart = 0;
 
+void checkWifiStatus() {
+  if (!isConnecting) {
+    if (wifiConnected) {
+      if (WiFi.status() != WL_CONNECTED) {
+        if (wifiLostStart == 0) {
+          wifiLostStart = millis();
+        } else if (millis() - wifiLostStart >= 3000) {
+          // Connection confirmed lost after 3-second grace period
+          wifiLostStart = 0;
+          wifiConnected = false;
+          wifiStatusMsg = "Connection lost. Switching...";
+          updateLCDMode();
+          redrawLCDLine();
+          autoConnectWifi();
+        }
+      } else {
+        wifiLostStart = 0;
+      }
+    }
+    return;
+  }
+
+  // 2. Monitor an in-progress connection attempt
   if (WiFi.status() == WL_CONNECTED) {
     isConnecting = false;
+    wifiLostStart = 0;
     autoConnectIndex = -1;
     wifiStatusMsg = "Connected to: " + WiFi.SSID();
     wifiConnected = true;
@@ -1371,6 +1398,7 @@ void getSystemStateJson(String &jsonOut) {
   jsonOut = "{";
   jsonOut += "\"bootId\":" + String(bootId) + ",";
   jsonOut += "\"setupDone\":" + String(isSetupDone ? "true" : "false") + ",";
+  jsonOut += "\"hasPin\":" + String(devicePin.length() == 4 ? "true" : "false") + ",";
   jsonOut += "\"bits\":" + String(brailleBits) + ",";
   jsonOut += "\"mode\":" + String((int)currentMode) + ",";
   jsonOut += "\"cursor\":" + String(cursorPos) + ",";
@@ -1851,6 +1879,13 @@ void loop() {
   dnsServer.processNextRequest();
   server.handleClient();
   checkWifiStatus();
+
+  static unsigned long lastIconRefresh = 0;
+  if (millis() - lastIconRefresh >= 3000) {
+    lastIconRefresh = millis();
+    updateLCDWifiIcon();
+    lcd.setCursor(getLcdCursor(), 1);
+  }
 
   char key = getHeldKey();  
   unsigned long now = millis();

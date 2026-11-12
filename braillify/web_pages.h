@@ -376,7 +376,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <p style="font-size:0.8rem; color:#57606a; margin-bottom:12px; font-weight:600;">Set a 4-digit PIN and recovery question to secure web interface access.</p>
 
       <div class="wifi-input-group">
-        <input type="password" maxlength="4" id="w-pin-input" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="Set 4-Digit PIN (e.g. 1234)">
+        <input type="password" maxlength="4" id="w-pin-input" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="Set 4-Digit PIN">
         <input type="text" id="w-sec-q-input" class="wifi-input" placeholder="Security Question (e.g. Pet Name?)">
         <input type="text" id="w-sec-a-input" class="wifi-input" placeholder="Security Answer">
       </div>
@@ -437,7 +437,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 </div>
 
 <!-- PIN ACCESS LOCK MODAL -->
-<div class="modal-overlay active" id="pin-lock-modal">
+<div class="modal-overlay" id="pin-lock-modal">
   <div class="modal-content" style="max-width: 360px; text-align: center;">
     
     <div id="pin-entry-view">
@@ -841,11 +841,11 @@ function updateSecurityConfigFromSettings() {
 
 let isAuthenticated = false;
 
-function checkPinAuthOnLoad() {
+function syncPinLockState(hasPin) {
   const isAuthed = sessionStorage.getItem('braillify_authed') === 'true';
   const lockModal = document.getElementById('pin-lock-modal');
 
-  if (isAuthed) {
+  if (!hasPin || isAuthed) {
     isAuthenticated = true;
     if (lockModal) lockModal.classList.remove('active');
   } else {
@@ -910,7 +910,7 @@ function showForgotPinView() {
   fetch('/api/get_sec_question')
     .then(r => r.json())
     .then(d => {
-      document.getElementById('forgot-sec-question').innerText = d.question || 'What is your pet\'s name?';
+      document.getElementById('forgot-sec-question').innerText = d.question || 'No security question set.';
     });
 }
 
@@ -944,8 +944,6 @@ function submitForgotPinReset() {
       alert('❌ Incorrect security answer. Reset failed.');
     });
 }
-
-checkPinAuthOnLoad();
 
 function triggerFactoryReset() {
   const confirmPin = prompt('⚠️ FACTORY RESET WARNING:\nThis will permanently erase all Wi-Fi credentials, PIN security, and memory.\n\nEnter your 4-digit PIN to confirm:');
@@ -1808,6 +1806,8 @@ function updateState(d){
   } else {
     handleLiveTtsFeedback(d);
   }
+
+  syncPinLockState(Boolean(d.hasPin));
 
   if (d.setupDone === false && !hasSetupWizardPrompted) {
     hasSetupWizardPrompted = true;
