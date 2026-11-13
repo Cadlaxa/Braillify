@@ -14,7 +14,7 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.6.1"
+#define FIRMWARE_VERSION "1.0.7"
 
 Preferences prefs;
 uint32_t bootId = 0;
@@ -28,6 +28,9 @@ LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 int lcdBrightness = 100;     // 0 - 100%
 int soundVolume = 100;       // 0 - 100%
 int ttsMode = 1;             // 0: OFF, 1: CHAR_AND_WORD, 2: WORD_ONLY, 3: FULL_TEXT
+
+int contractionMode = 0;
+byte pendingSymbolPrefix = 0;
 
 // Custom 5x8 Pixel Wi-Fi Signal Bitmaps (For Physical LCD Only)
 byte wifiBar1[8] = { 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00000 }; // 1 Bar
@@ -171,7 +174,6 @@ void enterTone();
 void modeTone();
 void errorTone();
 void scanTone();
-void triggerScanNotice();
 void updateFirmwareFromGitHub(const String& binUrl);
 void applyBrightness(int percent);
 byte charToBraille(char c);
@@ -205,18 +207,22 @@ void deleteSelection() {
 
 // ---------- Special & mapping functions ----------
 const char specialOutput[][8] = {
-  "?", "!", "&", ",", "_", ".", ";", ":", "\"", "()",
-  "/", "@", "*", "\'", "cannot", "had", "many", "spirit", 
-  "their", "world"
+  "?", "!", "&", ",", "-", ".", ";", ":", "\"", "(", ")",
+  "/", "\\", "@", "*", "'", "+", "=", "<", ">", "[", "]",
+  "{", "}", "$", "%", "#", "_", "cannot", "had", "many",
+  "spirit", "their", "world"
 };
 
 const byte specialDots[] = {
-  38, 22, 47, 2, 36, 50, 6, 18, 52, 54,
-  12, 44, 20, 4, 9, 19, 13, 14, 46, 58
+  38, 22, 47, 2, 36, 50, 6, 18, 52, 35, 28,
+  12, 33, 44, 20, 4, 22, 54, 35, 28, 35, 28,
+  35, 28, 14, 52, 57, 36, 9, 19, 13,
+  14, 46, 58
 };
 
+const int specialCount = sizeof(specialDots) / sizeof(specialDots[0]);
 String specialFromBraille(byte p) {
-  for (int i = 0; i < 20; i++) {
+  for (int i = 0; i < specialCount; i++) {
     if (p == specialDots[i]) {
       return String(specialOutput[i]);
     }
@@ -238,6 +244,22 @@ const char brailleTextTable[][7] = {
   "ch","gh","sh","th","wh","ed","er","ow","en","ar",
   "ou","ea","bb","cc","dd","ff","gg","in","by","st","ing",">","-"
 };
+
+struct SimpleContraction {
+  const char* abbr;
+  const char* full;
+};
+
+const SimpleContraction filipinoContractions[] = {
+  {"ag", "ang"}, {"mg", "mga"}, {"ng", "ng"}, {"s", "sa"},
+  {"ky", "kay"}, {"at", "at"}, {"na", "na"}, {"pa", "pa"},
+  {"ba", "ba"}, {"ko", "ko"}, {"mo", "mo"}, {"ni", "ni"},
+  {"si", "si"}, {"ix", "ito"}, {"iy", "iyon"}, {"ny", "niya"},
+  {"sl", "sila"}, {"km", "kami"}, {"ty", "tayo"}, {"ky", "kayo"},
+  {"hd", "hindi"}, {"oo", "oo"}, {"bk", "bakit"}, {"pn", "paano"},
+  {"sn", "saan"}, {"kl", "kailan"}, {"sn", "sino"}, {"an", "ano"}
+};
+const int filipinoContractionCount = sizeof(filipinoContractions) / sizeof(filipinoContractions[0]);
 
 String brailleToText(byte b) {
   int tableSize = sizeof(brailleDotsTable) / sizeof(brailleDotsTable[0]);
@@ -295,6 +317,7 @@ byte charToBraille(char c) {
 String brailleToChar(byte bits, bool commitState = true) {
   byte pattern = bits;
   String out = "";
+  String prefixStr = "";
 
   // Dot 6 (Capitalization Indicator)
   if (pattern == 32) {
@@ -340,12 +363,14 @@ String brailleToChar(byte bits, bool commitState = true) {
       specialLock = true;
       nextSpecial = false;
       specialPressedOnce = false;
+      pendingSymbolPrefix = 0;
       showTempIndicator('$', 2);
       return "";
     } else {
       specialPressedOnce = true;
       nextSpecial = true;
       specialLock = false;
+      pendingSymbolPrefix = 56;
       showTempIndicator('$', 1);
       return "";
     }
@@ -355,6 +380,13 @@ String brailleToChar(byte bits, bool commitState = true) {
   // Text Indicator
   if (pattern == 48) {
     if (!commitState) return ">"; // Pure UI preview only
+
+    bool afterLetter = (cursorPos > 0 && isAlpha(fullBuffer[cursorPos - 1]));
+    if (afterLetter) {
+      textPressedOnce = false;
+      return ">"; 
+    }
+
     if (textPressedOnce) {
       textLock = true;
       nextText = false;
@@ -369,6 +401,33 @@ String brailleToChar(byte bits, bool commitState = true) {
       return "";
     }
   }
+
+  // 1. Resolve two-cell UEB symbols ([], {}, <>, etc.)
+  if (pendingSymbolPrefix != 0) {
+    String sym = lookupUebSymbolPair(pendingSymbolPrefix, pattern);
+    byte usedPrefix = pendingSymbolPrefix;
+    if (commitState) {
+      pendingSymbolPrefix = 0;
+      nextSpecial = false;
+      specialPressedOnce = false;
+      clearTempIndicator();
+    }
+    if (sym.length() > 0) {
+      return sym;
+    }
+    // Preserve '-' prefix for final-letter groupsigns (e.g., r + Dots 4-6 + d -> "r-d")
+    if (usedPrefix == 40 && commitState) {
+      prefixStr = "-";
+    }
+  }
+
+  if (pattern == 8 || pattern == 40) {
+    if (!commitState) return (pattern == 40) ? "-" : "^";
+    pendingSymbolPrefix = pattern;
+    showTempIndicator((pattern == 40) ? '-' : '^', 1);
+    return "";
+  }
+
   if (commitState && pattern != 48) textPressedOnce = false;
 
   Mode evalMode = currentMode;
@@ -426,7 +485,7 @@ String brailleToChar(byte bits, bool commitState = true) {
     return "";
   }
 
-  return out;
+  return prefixStr + out;
 }
 
 void showTempIndicator(char ch, int len) {
@@ -586,7 +645,7 @@ void cycleMode() {
 void updateLCDMode() {
   lcd.setCursor(0,0);
   switch(currentMode) {
-    case AUTO:    lcd.print("Mode: AUTO     "); break;
+    case AUTO:    lcd.print("Mode: Auto     "); break;
     case TEXT:    lcd.print("Mode: Text     "); break;
     case NUMBER:  lcd.print("Mode: Number   "); break;
     case SPECIAL: lcd.print("Mode: Special  "); break;
@@ -611,6 +670,18 @@ void setupLittleFS() {
 }
 
 void saveLineToEEPROM() {
+    String checkText = fullBuffer;
+    checkText.trim();
+    if (checkText.length() == 0) {
+        lcd.setCursor(0, 0);
+        lcd.print("Nothing to Save ");
+        errorTone();
+        smartDelay(1000);
+        updateLCDMode();
+        lcd.setCursor(getLcdCursor(), 1);
+        return;
+    }
+
     File file = LittleFS.open("/buffer.txt", FILE_WRITE);
     if (file) {
         file.print(fullBuffer);
@@ -634,41 +705,38 @@ void saveLineToEEPROM() {
         }
         smartDelay(speed);
     }
-    insertSpaceAtCursor(); 
     scrollWindow();
     redrawLCDLine();
     updateLCDMode();
 }
 
 void loadLineFromEEPROM() {
-    if (!LittleFS.exists("/buffer.txt")) {
-        lcd.setCursor(0, 0);
-        lcd.print("No Save File!   ");
-        smartDelay(1000);
-        updateLCDMode();
-        return;
-    }
-
     String loaded = "";
-    File file = LittleFS.open("/buffer.txt", FILE_READ);
-    if (file) {
-        loaded = file.readString();
-        file.close();
+    if (LittleFS.exists("/buffer.txt")) {
+        File file = LittleFS.open("/buffer.txt", FILE_READ);
+        if (file) {
+            loaded = file.readString();
+            file.close();
+        }
     }
 
     while (loaded.endsWith(" ")) loaded.remove(loaded.length() - 1);
-    if (loaded.length() == 0) return;
-
-    if (fullBuffer.length() > 0 && cursorPos > 0 && fullBuffer[cursorPos - 1] != ' ') {
-        insertSpaceAtCursor();
+    if (loaded.length() == 0) {
+        lcd.setCursor(0, 0);
+        lcd.print("No Save Text!   ");
+        errorTone();
+        smartDelay(1000);
+        updateLCDMode();
+        lcd.setCursor(getLcdCursor(), 1);
+        return;
     }
 
+    pushUndoState();
     clearSelection();
 
     lcd.setCursor(0, 0);
     lcd.print("Appended MEMORY ");
     loadTone();
-    smartDelay(200);
 
     int barWidth = 16;
     int speed = 10;
@@ -681,13 +749,36 @@ void loadLineFromEEPROM() {
         smartDelay(speed);
     }
 
-    for (int i = 0; i < loaded.length(); i++) {
-        insertAtCursor(loaded[i], charToBraille(loaded[i])); 
+    String chunk = "";
+    if (fullBuffer.length() > 0 && cursorPos > 0 && fullBuffer[cursorPos - 1] != ' ') {
+        chunk += ' ';
     }
-    insertSpaceAtCursor(); 
+    chunk += loaded;
+    chunk += ' ';
+
+    int oldLen = fullBuffer.length();
+    int insertLen = chunk.length();
+    if (oldLen + insertLen >= MAX_BUFFER) {
+        insertLen = MAX_BUFFER - 1 - oldLen;
+        if (insertLen <= 0) return;
+        chunk = chunk.substring(0, insertLen);
+    }
+
+    for (int i = oldLen - 1; i >= cursorPos; i--) {
+        fullBufferBraille[i + insertLen] = fullBufferBraille[i];
+    }
+
+    for (int i = 0; i < insertLen; i++) {
+        fullBufferBraille[cursorPos + i] = charToBraille(chunk[i]);
+    }
+
+    fullBuffer = fullBuffer.substring(0, cursorPos) + chunk + fullBuffer.substring(cursorPos);
+    cursorPos += insertLen;
+
     scrollWindow();
     redrawLCDLine();
     updateLCDMode();
+    lcd.setCursor(getLcdCursor(), 1);
 }
 
 struct UEBContraction {
@@ -733,7 +824,9 @@ const UEBContraction uebContractions[] = {
   {16, ">n", "name"}, {0, "nec", "necessary"}, {0, "nei", "neither"}, {0, " n", " not"},
 
   {16, ">o", "one"}, {16, ">of", "oneself"}, {0, " m", " more"}, {51, " >ou", " ought"},
-  {40, "-d", "ound"}, {40, "-t", "ount"}, {51, "ourvs", "ourselves"}, {51, " ou", " out"},
+  {40, "-d", "ound"}, {40, "-t", "ount"}, {40, "-e", "ance"}, {40, "-n", "sion"}, {40, "-s", "less"},
+  {48, ">e", "ence"}, {48, ">g", "ong"}, {48, ">l", "ful"}, {48, ">n", "tion"}, {48, ">t", "ment"}, {48, ">s", "ness"}, {48, ">y", "ity"},
+  {51, "ourvs", "ourselves"}, {51, " ou", " out"},
 
   {0, "pd", "paid"}, {0, " p", " people"}, {59, "percv", "perceive"}, {59, "percvg", "perceiving"},
   {59, "perh", "perhaps"},
@@ -761,9 +854,57 @@ const UEBContraction uebContractions[] = {
   {0, "yrvs", "yourselves"},
 };
 
-const int contractionCount = sizeof(uebContractions)/sizeof(uebContractions[0]);
+struct UebSymbolPair {
+  byte prefix;
+  byte cell;
+  const char* output;
+};
 
+const UebSymbolPair uebSymbolPairs[] = {
+  // Dot 4 (8) prefix -> Angle brackets & currency/symbols
+  {8,  35, "<"},   // opening angle bracket <
+  {8,  28, ">"},   // closing angle bracket >
+  {8,  1,  "@"},   // @ sign
+  {8,  14, "$"},   // dollar $
+  {8,  47, "&"},   // ampersand &
+
+  // Dot 5 (16) prefix -> Round parentheses & math operators
+  {16, 35, "("},   // opening round parenthesis (
+  {16, 28, ")"},   // closing round parenthesis )
+  {16, 36, "-"},   // dash / minus -
+  {16, 22, "+"},   // plus +
+  {16, 38, "x"},   // multiplication x
+  {16, 12, "/"},   // division /
+  {16, 54, "="},   // equals =
+  {16, 20, "*"},   // asterisk *
+
+  // Dots 4-6 (40) prefix -> Square brackets & percent/underscore
+  {40, 35, "["},   // opening square bracket [
+  {40, 28, "]"},   // closing square bracket ]
+  {40, 36, "_"},   // underscore _
+  {40, 52, "%"},   // percent %
+
+  // Dots 4-5-6 (56) prefix -> Curly brackets, slashes, hashtag
+  {56, 35, "{"},   // opening curly bracket {
+  {56, 28, "}"},   // closing curly bracket }
+  {56, 12, "/"},   // forward slash /
+  {56, 33, "\\"},  // backward slash \
+  {56, 57, "#"}    // hashtag #
+};
+const int uebSymbolPairCount = sizeof(uebSymbolPairs) / sizeof(uebSymbolPairs[0]);
+
+String lookupUebSymbolPair(byte prefix, byte cell) {
+  for (int i = 0; i < uebSymbolPairCount; i++) {
+    if (uebSymbolPairs[i].prefix == prefix && uebSymbolPairs[i].cell == cell) {
+      return String(uebSymbolPairs[i].output);
+    }
+  }
+  return "";
+}
+
+const int contractionCount = sizeof(uebContractions)/sizeof(uebContractions[0]);
 void handleSpaceKeyDirect() {
+    if (contractionMode == 2) return; // Grade 1: Uncontracted spelling
     if (fullBuffer.length() == 0 || cursorPos == 0) return;
 
     int wordStart = cursorPos - 1;
@@ -778,42 +919,72 @@ void handleSpaceKeyDirect() {
     String lowerWord = targetWord;
     lowerWord.toLowerCase();
 
-    int bestIndex = -1;
+    String replacement = "";
+    int replaceOffset = 0;
 
-    for (int i = 0; i < contractionCount; i++) {
-        String pattern = String(uebContractions[i].letters);
-        pattern.trim();
-        if (pattern.startsWith(">") || pattern.startsWith("-")) {
-            pattern = pattern.substring(1);
+    if (contractionMode == 0) {
+        for (int i = 0; i < contractionCount; i++) {
+            uint8_t prefixDots = *(const uint8_t*)&uebContractions[i];
+            String pattern = String(uebContractions[i].letters);
+            pattern.trim();
+
+            if (prefixDots == 40 || prefixDots == 48) {
+                // Final-letter groupsign (- or >): must follow at least 1 letter
+                if (lowerWord.length() > pattern.length() && lowerWord.endsWith(pattern)) {
+                    replacement = String(uebContractions[i].contraction);
+                    replacement.trim();
+                    replaceOffset = lowerWord.length() - pattern.length();
+                    break;
+                }
+            } else {
+                // Whole-word or Dot-5 (16) initial-letter contraction
+                if (lowerWord == pattern) {
+                    replacement = String(uebContractions[i].contraction);
+                    replacement.trim();
+                    replaceOffset = 0;
+                    break;
+                }
+            }
         }
-
-        if (lowerWord == pattern) {
-            bestIndex = i;
-            break;
+    } else if (contractionMode == 1) {
+        for (int i = 0; i < filipinoContractionCount; i++) {
+            if (lowerWord == filipinoContractions[i].abbr) {
+                replacement = String(filipinoContractions[i].full);
+                replaceOffset = 0;
+                break;
+            }
         }
     }
 
-    if (bestIndex >= 0) {
-        String replacement = String(uebContractions[bestIndex].contraction);
-        replacement.trim();
+    if (replacement.length() > 0) {
+        pushUndoState();
 
+        String matchedPart = targetWord.substring(replaceOffset);
         bool allUpper = true;
-        bool firstUpper = (targetWord.length() > 0 && targetWord[0] >= 'A' && targetWord[0] <= 'Z');
-        for (int k = 0; k < targetWord.length(); k++) {
-            if (!(targetWord[k] >= 'A' && targetWord[k] <= 'Z')) { allUpper = false; break; }
+        bool firstUpper = (matchedPart.length() > 0 && matchedPart[0] >= 'A' && matchedPart[0] <= 'Z');
+        for (int k = 0; k < matchedPart.length(); k++) {
+            if (!(matchedPart[k] >= 'A' && matchedPart[k] <= 'Z')) { allUpper = false; break; }
         }
 
         if (allUpper) {
             replacement.toUpperCase();
-        } else if (firstUpper && replacement.length() > 0) {
+        } else if (firstUpper) {
             replacement[0] = toupper(replacement[0]);
         }
 
-        fullBuffer = fullBuffer.substring(0, wordStart) + replacement + fullBuffer.substring(cursorPos);
-        cursorPos = wordStart + replacement.length();
+        int replaceStart = wordStart + replaceOffset;
+        int oldTailLen = fullBuffer.length() - cursorPos;
+        int newTailStart = replaceStart + replacement.length();
+
+        if (oldTailLen > 0 && newTailStart + oldTailLen < 4096) {
+            memmove(&fullBufferBraille[newTailStart], &fullBufferBraille[cursorPos], oldTailLen * sizeof(fullBufferBraille[0]));
+        }
+
+        fullBuffer = fullBuffer.substring(0, replaceStart) + replacement + fullBuffer.substring(cursorPos);
+        cursorPos = newTailStart;
 
         for (int k = 0; k < replacement.length(); k++) {
-            fullBufferBraille[wordStart + k] = charToBraille(replacement[k]);
+            fullBufferBraille[replaceStart + k] = charToBraille(replacement[k]);
         }
 
         ::hasContraction = true;
@@ -970,6 +1141,205 @@ void handleApiFactoryReset() {
     return;
   }
   server.send(401, "application/json", "{\"status\":\"error\",\"msg\":\"Incorrect PIN for factory reset!\"}");
+}
+
+void handleApiInsert() {
+  if (server.hasArg("text")) {
+    String incoming = server.arg("text");
+    if (incoming.length() > 0) {
+      pushUndoState();
+      for (int i = 0; i < incoming.length(); i++) {
+        insertAtCursor(incoming[i], charToBraille(incoming[i]));
+      }
+    }
+  }
+  handleApiState();
+}
+
+void handleApiCmd() {
+  if (server.hasArg("action")) {
+    String act = server.arg("action");
+
+    if (act == "clear") {
+      if (fullBuffer.length() > 0) {
+        pushUndoState();
+        fullBuffer = "";
+        cursorPos = 0;
+        windowStart = 0;
+        brailleBits = 0;
+        sound(2100, 70);
+        clearSelection();
+        redrawLCDLine();
+      }
+    } else if (act == "select_all") {
+      if (fullBuffer.length() > 0) {
+        selectStart = 0;
+        selectEnd = fullBuffer.length();
+        cursorPos = selectEnd;
+        scrollWindow();
+        redrawLCDLine();
+      }
+    } else if (act == "select_word") {
+      if (fullBuffer.length() > 0) {
+        int s = constrain(cursorPos, 0, fullBuffer.length());
+        if (s == fullBuffer.length() && s > 0) s--;
+        while (s > 0 && fullBuffer[s - 1] != ' ') s--;
+        int e = s;
+        while (e < fullBuffer.length() && fullBuffer[e] != ' ') e++;
+        selectStart = s;
+        selectEnd = e;
+        cursorPos = e;
+        scrollWindow();
+        redrawLCDLine();
+      }
+    } else if (act == "word_left") {
+      if (cursorPos > 0) {
+        int p = cursorPos - 1;
+        while (p > 0 && fullBuffer[p] == ' ') p--;
+        while (p > 0 && fullBuffer[p - 1] != ' ') p--;
+        cursorPos = p;
+        clearSelection();
+        scrollWindow();
+        redrawLCDLine();
+      }
+    } else if (act == "word_right") {
+      int len = fullBuffer.length();
+      if (cursorPos < len) {
+        int p = cursorPos;
+        while (p < len && fullBuffer[p] != ' ') p++;
+        while (p < len && fullBuffer[p] == ' ') p++;
+        cursorPos = p;
+        clearSelection();
+        scrollWindow();
+        redrawLCDLine();
+      }
+    } else if (act == "prefix_cap") {
+      brailleBits = 32;
+      handleHashSinglePress();
+      brailleBits = 0;
+    } else if (act == "prefix_capslock") {
+      dot6PressedOnce = true;
+      brailleBits = 32;
+      handleHashSinglePress();
+      brailleBits = 0;
+    } else if (act == "prefix_num") {
+      brailleBits = 60;
+      handleHashSinglePress();
+      brailleBits = 0;
+    } else if (act == "prefix_spec") {
+      brailleBits = 56;
+      handleHashSinglePress();
+      brailleBits = 0;
+    } else if (act == "set_contraction_mode" && server.hasArg("val")) {
+      modeTone();
+      contractionMode = constrain(server.arg("val").toInt(), 0, 2);
+      prefs.begin("settings", false);
+      prefs.putInt("conMode", contractionMode);
+      prefs.end();
+    }
+  }
+  handleApiState();
+}
+
+void handleApiSlot() {
+  int slot = server.hasArg("slot") ? constrain(server.arg("slot").toInt(), 1, 4) : 1;
+  String op = server.hasArg("op") ? server.arg("op") : "load";
+  String path = (slot == 1) ? "/buffer.txt" : ("/slot" + String(slot) + ".txt");
+
+  if (op == "save") {
+    String checkText = fullBuffer;
+    checkText.trim();
+    if (checkText.length() == 0) {
+      lcd.setCursor(0, 0);
+      lcd.print("Nothing to Save ");
+      errorTone();
+      smartDelay(900);
+      updateLCDMode();
+      handleApiState();
+      return;
+    }
+    File f = LittleFS.open(path, FILE_WRITE);
+    if (f) {
+      f.print(fullBuffer);
+      f.close();
+      lcd.setCursor(0, 0);
+      lcd.print("Saved Slot " + String(slot) + "    ");
+      saveTone();
+      smartDelay(700);
+      updateLCDMode();
+    }
+  } else if (op == "load") {
+    String loaded = "";
+    if (LittleFS.exists(path)) {
+      File f = LittleFS.open(path, FILE_READ);
+      if (f) {
+        loaded = f.readString();
+        f.close();
+      }
+    }
+    while (loaded.endsWith(" ")) loaded.remove(loaded.length() - 1);
+    if (loaded.length() == 0) {
+      lcd.setCursor(0, 0);
+      lcd.print("Slot " + String(slot) + " Empty!   ");
+      errorTone();
+      smartDelay(900);
+      updateLCDMode();
+      handleApiState();
+      return;
+    }
+
+    pushUndoState();
+    clearSelection();
+
+    lcd.setCursor(0, 0);
+    lcd.print("Loaded Slot " + String(slot) + "   ");
+    loadTone();
+
+    int barWidth = 16;
+    int speed = 10;
+    for (int i = 0; i <= barWidth; i++) {
+      lcd.setCursor(0, 1);
+      for (int j = 0; j < barWidth; j++) {
+        if (j <= i) lcd.print("#");
+        else lcd.print(" ");
+      }
+      smartDelay(speed);
+    }
+
+    String chunk = "";
+    if (fullBuffer.length() > 0 && cursorPos > 0 && fullBuffer[cursorPos - 1] != ' ') {
+      chunk += ' ';
+    }
+    chunk += loaded;
+    chunk += ' ';
+
+    int oldLen = fullBuffer.length();
+    int insertLen = chunk.length();
+    if (oldLen + insertLen >= MAX_BUFFER) {
+      insertLen = MAX_BUFFER - 1 - oldLen;
+      if (insertLen <= 0) {
+        handleApiState();
+        return;
+      }
+      chunk = chunk.substring(0, insertLen);
+    }
+
+    for (int i = oldLen - 1; i >= cursorPos; i--) {
+      fullBufferBraille[i + insertLen] = fullBufferBraille[i];
+    }
+
+    for (int i = 0; i < insertLen; i++) {
+      fullBufferBraille[cursorPos + i] = charToBraille(chunk[i]);
+    }
+
+    fullBuffer = fullBuffer.substring(0, cursorPos) + chunk + fullBuffer.substring(cursorPos);
+    cursorPos += insertLen;
+
+    scrollWindow();
+    redrawLCDLine();
+    updateLCDMode();
+  }
+  handleApiState();
 }
 
 void loadKnownWifis() {
@@ -1237,6 +1607,7 @@ void handleApiSetText() {
     if (incoming.length() >= MAX_BUFFER) {
       incoming = incoming.substring(0, MAX_BUFFER - 1);
     }
+    pushUndoState();
     fullBuffer = incoming;
 
     if (server.hasArg("pos")) {
@@ -1347,7 +1718,7 @@ void getSystemStateJson(String &jsonOut) {
     if (line0.length() > 16) line0 = line0.substring(0, 16);
   } else {
     switch(currentMode) {
-      case AUTO:    line0 = "Mode: AUTO     "; break;
+      case AUTO:    line0 = "Mode: Auto     "; break;
       case TEXT:    line0 = "Mode: Text     "; break;
       case NUMBER:  line0 = "Mode: Number   "; break;
       case SPECIAL: line0 = "Mode: Special  "; break;
@@ -1405,6 +1776,7 @@ void getSystemStateJson(String &jsonOut) {
   jsonOut += "\"selStart\":" + String(selectStart) + ",";
   jsonOut += "\"selEnd\":" + String(selectEnd) + ",";
   jsonOut += "\"ttsMode\":" + String(ttsMode) + ",";
+  jsonOut += "\"contractionMode\":" + String(contractionMode) + ",";
   jsonOut += "\"preview\":\"" + preview + "\",";
   jsonOut += "\"lcd0\":\"" + line0 + "\",";
   jsonOut += "\"lcd1\":\"" + line1 + "\",";
@@ -1620,6 +1992,7 @@ void setup() {
   prefs.end();
   loadSecurityPreferences();
   applyBrightness(lcdBrightness);
+  contractionMode = prefs.getInt("conMode", 0);
 
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
@@ -1660,6 +2033,10 @@ void setup() {
   server.on("/connecttest.txt", handleCaptivePortal);
   server.on("/redirect", handleCaptivePortal);
   server.on("/canonical.html", handleCaptivePortal);
+
+  server.on("/api/insert", handleApiInsert);
+  server.on("/api/cmd", handleApiCmd);
+  server.on("/api/slot", handleApiSlot);
   
   server.on("/api/ota_update", HTTP_GET, []() {
     String defaultUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/firmware.bin";
@@ -1809,53 +2186,58 @@ void connectionTone() {
   sound(3000, 140); smartDelay(150);
 }
 
-void triggerScanNotice() {
-  lcd.clear();
-  if (WiFi.status() != WL_CONNECTED) {
-    lcd.setCursor(0, 0);
-    lcd.print(" Connect to     ");
-    lcd.setCursor(0, 1);
-    lcd.print(" internet first ");
-    errorTone();
+struct UndoState {
+  String text;
+  int cursor;
+  std::vector<byte> braille;
+};
 
-    int barWidth = 16;
-    int speed = 25;
-    for (int i = 0; i <= barWidth; i++) {
-      lcd.setCursor(0, 1);
-      for (int j = 0; j < barWidth; j++) {
-        if (j <= i) lcd.print("!");
-        else lcd.print(" ");
-      }
-      smartDelay(speed);
-    }
-  } else {
-    lcd.setCursor(0, 0);
-    lcd.print("   Scan using   ");
-    lcd.setCursor(0, 1);
-    lcd.print("external device!");
-    scanTone();
-    smartDelay(300);
+std::vector<UndoState> undoStack;
+const size_t MAX_UNDO_STEPS = 30;
 
-    int barWidth = 16;
-    int speed = 30;
-    for (int i = 0; i <= barWidth; i++) {
-      lcd.setCursor(0, 0);
-      for (int j = 0; j < barWidth; j++) {
-        if (j <= i) lcd.print("#");
-        else lcd.print(" ");
-      }
-      lcd.setCursor(0, 1);
-      for (int j = 0; j < barWidth; j++) {
-        if (j <= i) lcd.print("#");
-        else lcd.print(" ");
-      }
-      smartDelay(speed);
-    }
+void pushUndoState() {
+  UndoState state;
+  state.text = fullBuffer;
+  state.cursor = cursorPos;
+  state.braille.reserve(fullBuffer.length());
+  for (int i = 0; i < fullBuffer.length(); i++) {
+    state.braille.push_back(fullBufferBraille[i]);
   }
-  smartDelay(400);
+
+  if (undoStack.size() >= MAX_UNDO_STEPS) {
+    undoStack.erase(undoStack.begin());
+  }
+  undoStack.push_back(state);
+}
+
+void performUndo() {
+  if (undoStack.empty()) {
+    errorTone();
+    lcd.setCursor(0, 0);
+    lcd.print("Nothing to Undo ");
+    smartDelay(700);
+    updateLCDMode();
+    lcd.setCursor(getLcdCursor(), 1);
+    return;
+  }
+
+  UndoState prev = undoStack.back();
+  undoStack.pop_back();
+
+  fullBuffer = prev.text;
+  cursorPos = prev.cursor;
+  for (size_t i = 0; i < prev.braille.size() && i < MAX_BUFFER; i++) {
+    fullBufferBraille[i] = prev.braille[i];
+  }
+
+  brailleBits = 0;
+  clearSelection();
   scrollWindow();
   redrawLCDLine();
-  updateLCDMode();
+
+  sound(1600, 60);
+  smartDelay(70);
+  sound(1200, 80);
 }
 
 char getHeldKey() {
@@ -1930,6 +2312,7 @@ void handleHashSinglePress() {
 
     if (out != "") {
         if (fullBuffer.length() + out.length() >= MAX_BUFFER) return;
+        pushUndoState();
 
         if (fullBuffer.length() == 0 || fullBuffer.endsWith(" ")) {
             contractionPrefix = brailleBits;
@@ -1942,6 +2325,7 @@ void handleHashSinglePress() {
 }
 
 void handleHashDoublePress() {
+    pushUndoState();
     insertAtCursor(' ', 0);
 }
 
@@ -1992,6 +2376,7 @@ void handleKeyPress(char key) {
         case '0':
             sound(1800, 70);
             handleSpaceKeyDirect();
+            pushUndoState();
             insertSpaceAtCursor();
             if (currentMode == AUTO) currentMode = TEXT;
             capsLock = false;
@@ -2017,7 +2402,12 @@ void handleKeyPress(char key) {
             break;
         }
 
-        case 'D': sound(2100, 70); backspaceAtCursor(); break;
+        case 'D': sound(2100, 70);
+                  if (hasSelection() || cursorPos > 0) {
+                    pushUndoState();
+                  }
+                  backspaceAtCursor();
+                  break;
         case '7': sound(1800, 70); moveCursorLeft(); break;
         case 'C': sound(1800, 70); moveCursorRight(); break;
 
@@ -2025,7 +2415,7 @@ void handleKeyPress(char key) {
         case 'B': loadLineFromEEPROM(); break;
         
         case '1': 
-          triggerScanNotice();
+          performUndo();
           break;
 
         default: break;
