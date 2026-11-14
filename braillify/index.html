@@ -298,6 +298,13 @@
     .btn-update:disabled { opacity: 0.6; cursor: not-allowed; background: #d0d7de; color: #57606a; }
     #ota-status { font-size: 0.75rem; font-weight: bold; color: var(--orange-dark); margin-top: 6px; min-height: 1.2em; }
 
+    .reconnect-dot { width: 9px; height: 9px; border-radius: 50%; background: #e65100; display: inline-block; animation: pulseDisconnect 1.1s infinite ease-in-out; }
+
+    @keyframes pulseDisconnect {
+      0%, 100% { transform: scale(0.85); opacity: 0.45; }
+      50% { transform: scale(1.2); opacity: 1; }
+    }
+
     /* ---------- LANDSCAPE SPLIT-PANE LAYOUT (TABLET / DESKTOP / PHONE) ---------- */
     @media (orientation: landscape) and (min-width: 560px) {
       body {
@@ -840,6 +847,32 @@
   </div>
 
   <div class="footer">BRAILLIFY: http://braillify.local</div>
+</div>
+
+<!-- DISCONNECTED FROM DEVICE MODAL -->
+<div class="modal-overlay" id="disconnect-modal" style="z-index: 9999;">
+  <div class="modal-content" style="max-width: 380px; text-align: center;">
+    <div class="modal-header" style="justify-content: center; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
+      <h2 style="margin: 0; font-size: 1.15rem; color: #c62828;">📡 Connection Lost</h2>
+    </div>
+    <div style="padding: 16px 12px;">
+      <p style="margin: 0 0 10px; font-weight: 700; font-size: 0.95rem;">
+        Disconnected from Braillify
+      </p>
+      <p style="margin: 0 0 14px; font-size: 0.85rem; opacity: 0.85; line-height: 1.4;">
+        Make sure your Braillify device is powered on and your device is connected to the <strong>Braillify</strong> Wi-Fi network.
+      </p>
+      <div id="disconnect-status-pill" style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 2px solid var(--border); border-radius: 999px; font-size: 0.8rem; font-weight: 700; background: #fff3e0; color: #e65100; margin-bottom: 14px;">
+        <span class="reconnect-dot"></span>
+        <span id="disconnect-status-text">Reconnecting automatically...</span>
+      </div>
+      <div>
+        <button class="action-btn" id="retry-connect-btn" onclick="manualReconnectCheck()" style="width: 100%; padding: 10px; font-weight: 800; justify-content: center;">
+          🔄 Retry Now
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- UEB / FILIPINO CONTRACTION CHEAT-SHEET MODAL -->
@@ -2927,6 +2960,61 @@ function updateWifiSignalUI(connected, rssi) {
 
 let currentBootId = null;
 
+let failedPollCount = 0;
+let isDeviceDisconnected = false;
+const DISCONNECT_THRESHOLD = 2; // Show modal after 2 consecutive failed checks
+
+function setDisconnectedState(disconnected) {
+  const modal = document.getElementById('disconnect-modal');
+  if (!modal) return;
+
+  if (disconnected && !isDeviceDisconnected) {
+    isDeviceDisconnected = true;
+    modal.classList.add('active');
+    if (typeof updateBodyScrollLock === 'function') updateBodyScrollLock();
+  } else if (!disconnected && isDeviceDisconnected) {
+    isDeviceDisconnected = false;
+    failedPollCount = 0;
+    modal.classList.remove('active');
+    if (typeof updateBodyScrollLock === 'function') updateBodyScrollLock();
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal, cache: 'no-store' });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function manualReconnectCheck() {
+  const btn = document.getElementById('retry-connect-btn');
+  const statusText = document.getElementById('disconnect-status-text');
+  if (btn) btn.disabled = true;
+  if (statusText) statusText.innerText = 'Checking connection...';
+
+  try {
+    const res = await fetchWithTimeout('/api/state', {}, 2500);
+    if (res.ok) {
+      setDisconnectedState(false);
+      if (typeof pollState === 'function') pollState();
+    } else if (statusText) {
+      statusText.innerText = 'Still unreachable. Retrying...';
+    }
+  } catch (err) {
+    if (statusText) statusText.innerText = 'Still unreachable. Retrying...';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Instant browser offline/online hooks
+window.addEventListener('offline', () => setDisconnectedState(true));
+window.addEventListener('online', () => manualReconnectCheck());
+
 function updateState(d){
   if (isFirstStateUpdate) {
     lastSpokenText = d.fullText || "";
@@ -3036,20 +3124,27 @@ async function triggerOtaUpdate() {
 }
 
 let isPolling = false;
+let isPolling = false;
 async function pollState() {
   if (isPolling) return;
   isPolling = true;
 
   try {
-    const res = await fetch('/api/state');
-    if (res.ok) {
-      const d = await res.json();
-      updateState(d);
-    }
+    const res = await fetchWithTimeout('/api/state', {}, 3000);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+
+    const d = await res.json();
+    failedPollCount = 0;
+    setDisconnectedState(false);
+    updateState(d);
   } catch (e) {
+    failedPollCount++;
+    if (failedPollCount >= DISCONNECT_THRESHOLD) {
+      setDisconnectedState(true);
+    }
   } finally {
     isPolling = false;
-    const interval = document.hidden ? 1000 : 300;
+    const interval = isDeviceDisconnected ? 1500 : (document.hidden ? 1000 : 300);
     setTimeout(pollState, interval);
   }
 }
@@ -3071,7 +3166,7 @@ function triggerShortcutVisual(dataKey) {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (!isAuthenticated) return;
+  if (!isAuthenticated || isDeviceDisconnected) return;
   const tag = (document.activeElement && document.activeElement.tagName) || '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
