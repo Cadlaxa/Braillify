@@ -1504,11 +1504,36 @@ void checkWifiStatus() {
 }
 
 // ---------- Captive Portal & Web Server Endpoints ----------
+bool portalDismissed = false;
+
+void sendAppleSuccess() {
+  server.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
+}
+
+void handleAppleCaptive() {
+  String ua = server.header("User-Agent");
+  // Reply "Success" only to Apple's background daemon so macOS never pops up or loops CNA
+  if (ua.indexOf("CaptiveNetworkSupport") >= 0) {
+    sendAppleSuccess();
+    return;
+  }
+  server.sendHeader("Location", "http://192.168.4.1/", true);
+  server.send(302, "text/plain", "");
+}
+
 void handleCaptivePortal() {
   String host = server.hostHeader();
+  String uri = server.uri();
+
+  if (uri == "/hotspot-detect.html" || uri == "/library/test/success.html" || host.indexOf("apple.com") >= 0) {
+    handleAppleCaptive();
+    return;
+  }
+
   if (host == "192.168.4.1" || host == "braillify.local" || host.indexOf("192.168.4.1") >= 0) {
     server.send_P(200, "text/html", index_html);
   } else {
+    // Android & Windows always redirect straight to the Braillify UI
     server.sendHeader("Location", "http://192.168.4.1/", true);
     server.send(302, "text/plain", "");
   }
@@ -2003,6 +2028,9 @@ void setup() {
 
   autoConnectWifi();
 
+  const char* headerKeys[] = {"User-Agent"};
+  server.collectHeaders(headerKeys, 1);
+
   server.on("/", handleCaptivePortal);
   server.on("/api/state", handleApiState);
   server.on("/api/key", handleApiKey);
@@ -2023,20 +2051,20 @@ void setup() {
   server.on("/api/save_security", handleApiSaveSecurity);
   server.on("/api/factory_reset", handleApiFactoryReset);
 
+  server.on("/api/insert", handleApiInsert);
+  server.on("/api/cmd", handleApiCmd);
+  server.on("/api/slot", handleApiSlot);
+
+  server.on("/hotspot-detect.html", handleAppleCaptive);
+  server.on("/library/test/success.html", handleAppleCaptive);
   server.on("/generate_204", handleCaptivePortal);
   server.on("/gen_204", handleCaptivePortal);
   server.on("/connectivity-check.html", handleCaptivePortal);
-  server.on("/hotspot-detect.html", handleCaptivePortal);
-  server.on("/library/test/success.html", handleCaptivePortal);
   server.on("/success.txt", handleCaptivePortal);
   server.on("/ncsi.txt", handleCaptivePortal);
   server.on("/connecttest.txt", handleCaptivePortal);
   server.on("/redirect", handleCaptivePortal);
   server.on("/canonical.html", handleCaptivePortal);
-
-  server.on("/api/insert", handleApiInsert);
-  server.on("/api/cmd", handleApiCmd);
-  server.on("/api/slot", handleApiSlot);
   
   server.on("/api/ota_update", HTTP_GET, []() {
     String defaultUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/firmware.bin";

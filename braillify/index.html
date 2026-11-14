@@ -552,11 +552,11 @@
       <div class="sub">HARDWARE TRANSLATOR</div>
     </div>
     <div class="header-btns">
-      <div class="wifi-signal-badge" id="wifi-signal-badge" title="Click to Open Wi-Fi Settings" onclick="openSettingsModal('wifi')">
+      <div class="wifi-signal-badge" id="wifi-signal-badge" title="Open Wi-Fi Settings" onclick="openSettingsModal('wifi')">
         <span class="signal-icon-symbol" id="sig-symbol">📡</span>
         <span id="sig-dbm-label">--</span>
       </div>
-      <button class="modal-trigger-btn" onclick="openFlashcardModal()">🎓 Practice</button>
+      <button class="modal-trigger-btn" onclick="openFlashcardModal()" title="Open Braille Flashcard Practice">🎓 Practice</button>
     </div>
   </div>
 
@@ -592,9 +592,9 @@
     <div class="selection-toolbar" id="selection-toolbar">
       <span><span id="sel-count-label">0</span> chars selected</span>
       <div style="display:flex; gap:6px;">
-        <button class="action-btn" onclick="speakSelection()">🗣️ Speak</button>
-        <button class="action-btn" id="sel-copy-btn" onclick="copySelection()">📋 Copy</button>
-        <button class="action-btn" style="background:#ffebee; color:#c62828;" onclick="deleteSelectionWeb()">🗑️ Del</button>
+        <button class="action-btn" onclick="speakSelection()" title="Speak Selected Text">🗣️ Speak</button>
+        <button class="action-btn" id="sel-copy-btn" onclick="copySelection()" title="Copy Selected Text">📋 Copy</button>
+        <button class="action-btn" style="background:#ffebee; color:#c62828;" onclick="deleteSelectionWeb()" title="Delete Selected Text (Shortcut: Backspace / Delete)">🗑️ Del</button>
       </div>
     </div>
   </div>
@@ -623,14 +623,14 @@
 
   <!-- SLIDABLE KEYPAD DECK NAVIGATION -->
   <div class="deck-nav-bar">
-    <button class="deck-arrow-btn" onclick="stepDeck(-1)" title="Previous Deck">&lt;</button>
+    <button class="deck-arrow-btn" onclick="stepDeck(-1)" title="Previous Deck (Shortcut: [)">&lt;</button>
     <div class="deck-pills">
-      <button class="deck-pill active" id="deck-pill-0" onclick="goToDeck(0)">⌨️ Keypad</button>
-      <button class="deck-pill" id="deck-pill-1" onclick="goToDeck(1)">✂️ Edit</button>
-      <button class="deck-pill" id="deck-pill-2" onclick="goToDeck(2)">⠿ UEB</button>
-      <button class="deck-pill" id="deck-pill-3" onclick="goToDeck(3)">💾 Files</button>
+      <button class="deck-pill active" id="deck-pill-0" onclick="goToDeck(0)" title="Switch to Primary Braille Keypad">⌨️ Keypad</button>
+      <button class="deck-pill" id="deck-pill-1" onclick="goToDeck(1)" title="Switch to Text Editing & Selection Deck">✂️ Edit</button>
+      <button class="deck-pill" id="deck-pill-2" onclick="goToDeck(2)" title="Switch to UEB & Filipino Contractions Deck">⠿ UEB</button>
+      <button class="deck-pill" id="deck-pill-3" onclick="goToDeck(3)" title="Switch to Memory Slots, Export & Tools Deck">💾 Files</button>
     </div>
-    <button class="deck-arrow-btn" onclick="stepDeck(1)" title="Next Deck">&gt;</button>
+    <button class="deck-arrow-btn" onclick="stepDeck(1)" title="Next Deck (Shortcut: ])">&gt;</button>
   </div>
 
   <!-- HORIZONTAL SWIPE CAROUSEL -->
@@ -639,52 +639,52 @@
     <!-- PAGE 1: PRIMARY BRAILLE KEYPAD + UNDO -->
     <div class="keypad-page" data-page="0" data-name="Braille Keypad">
       <div class="keypad-grid">
-        <button class="key-btn blue-btn" data-key="1" title="Undo Last Action">
+        <button class="key-btn blue-btn" data-key="1" title="Undo Last Action (Shortcut: U or Z)">
           <svg viewBox="0 0 24 24"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>
           <span class="key-label">UNDO</span>
         </button>
-        <button class="key-btn cmd" data-key="2"><span class="dot-key-num">2</span><span class="dot-key-sub">• Dot 1</span></button>
-        <button class="key-btn cmd" data-key="3"><span class="dot-key-num">3</span><span class="dot-key-sub">• Dot 4</span></button>
-        <button class="key-btn yellow-btn" data-key="A" title="Save Memory">
+        <button class="key-btn cmd" data-key="2" title="Dot 1 (Shortcut: 8 or F)"><span class="dot-key-num">8</span><span class="dot-key-sub">• Dot 1</span></button>
+        <button class="key-btn cmd" data-key="3" title="Dot 4 (Shortcut: 9 or J)"><span class="dot-key-num">9</span><span class="dot-key-sub">• Dot 4</span></button>
+        <button class="key-btn yellow-btn" data-key="A" title="Save Memory (Shortcut: 1)">
           <svg viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 0.9-2 2v14c0 1.1 0.89 2 2 2h14c1.1 0 2-0.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
           <span class="key-label">SAVE</span>
         </button>
 
-        <button class="key-btn blue-btn" data-key="4" title="Mute Toggle">
+        <button class="key-btn blue-btn" data-key="4" title="Mute Toggle (Shortcut: M)">
           <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89 0.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-0.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
           <span class="key-label">MUTE</span>
         </button>
-        <button class="key-btn cmd" data-key="5"><span class="dot-key-num">5</span><span class="dot-key-sub">• Dot 2</span></button>
-        <button class="key-btn cmd" data-key="6"><span class="dot-key-num">6</span><span class="dot-key-sub">• Dot 5</span></button>
-        <button class="key-btn yellow-btn" data-key="B" title="Load Memory">
+        <button class="key-btn cmd" data-key="5" title="Dot 2 (Shortcut: 5 or D)"><span class="dot-key-num">5</span><span class="dot-key-sub">• Dot 2</span></button>
+        <button class="key-btn cmd" data-key="6" title="Dot 5 (Shortcut: 6 or K)"><span class="dot-key-num">6</span><span class="dot-key-sub">• Dot 5</span></button>
+        <button class="key-btn yellow-btn" data-key="B" title="Load Memory (Shortcut: 7)">
           <svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99 0.9-1.99 2L2 18c0 1.1 0.9 2 2 2h16c1.1 0 2-0.9 2-2V8c0-1.1-0.9-2-2-2zm0 12H4V8h16v10z"/></svg>
           <span class="key-label">LOAD</span>
         </button>
 
-        <button class="key-btn cmd" data-key="7" title="Cursor Left">
+        <button class="key-btn cmd" data-key="7" title="Cursor Left (Shortcut: Left Arrow or 4)">
           <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
           <span class="key-label">LEFT</span>
         </button>
-        <button class="key-btn cmd" data-key="8"><span class="dot-key-num">8</span><span class="dot-key-sub">• Dot 3</span></button>
-        <button class="key-btn cmd" data-key="9"><span class="dot-key-num">9</span><span class="dot-key-sub">• Dot 6</span></button>
-        <button class="key-btn cmd" data-key="C" title="Cursor Right">
+        <button class="key-btn cmd" data-key="8" title="Dot 3 (Shortcut: 2 or S)"><span class="dot-key-num">2</span><span class="dot-key-sub">• Dot 3</span></button>
+        <button class="key-btn cmd" data-key="9" title="Dot 6 (Shortcut: 3 or L)"><span class="dot-key-num">3</span><span class="dot-key-sub">• Dot 6</span></button>
+        <button class="key-btn cmd" data-key="C" title="Cursor Right (Shortcut: Right Arrow)">
           <svg viewBox="0 0 24 24"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
           <span class="key-label">RIGHT</span>
         </button>
 
-        <button class="key-btn green-btn" data-key="*" title="Cycle Mode">
+        <button class="key-btn green-btn" data-key="*" title="Cycle Mode (Shortcut: Tab or *)">
           <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-0.25 1.97-0.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01 0.25-1.97 0.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
           <span class="key-label">MODE</span>
         </button>
-        <button class="key-btn green-btn" data-key="0" title="Space">
+        <button class="key-btn green-btn" data-key="0" title="Space (Shortcut: Spacebar or 0)">
           <svg viewBox="0 0 24 24"><path d="M18 9v4H6V9H4v6h16V9h-2z"/></svg>
           <span class="key-label">SPACE</span>
         </button>
-        <button class="key-btn green-btn" data-key="#" title="Enter / Confirm Cell">
+        <button class="key-btn green-btn" data-key="#" title="Enter / Confirm Cell (Shortcut: Enter)">
           <svg viewBox="0 0 24 24"><path d="M19 7v4H5.83l3.58-3.59L8 6l-6 6 6 6 1.41-1.41L5.83 13H21V7h-2z"/></svg>
           <span class="key-label">ENTER</span>
         </button>
-        <button class="key-btn green-btn" data-key="D" title="Backspace / Delete">
+        <button class="key-btn green-btn" data-key="D" title="Backspace / Delete (Shortcut: Backspace or Delete)">
           <svg viewBox="0 0 24 24"><path d="M22 3H7c-0.69 0-1.23 0.35-1.59 0.88L0 12l5.41 8.11c0.36 0.53 0.9 0.89 1.59 0.89h15c1.1 0 2-0.9 2-2V5c0-1.1-0.9-2-2-2zm0 16H7.07L2.4 12l4.66-7H22v14zm-11.59-2L14 13.41 17.59 17 19 15.59 15.41 12 19 8.41 17.59 7 14 10.59 10.41 7 9 8.41 12.59 12 9 15.59z"/></svg>
           <span class="key-label">DEL</span>
         </button>
@@ -694,36 +694,36 @@
     <!-- PAGE 2: EDITING & SELECTION DECK -->
     <div class="keypad-page" data-page="1" data-name="Editing Deck">
       <div class="keypad-grid">
-        <button class="key-btn blue-btn" onclick="setCursorPos(0)">
+        <button class="key-btn blue-btn" onclick="setCursorPos(0)" title="Move Cursor to Beginning of Text">
           <span class="dot-key-num">|&lt;</span>
           <span class="key-label">HOME</span>
         </button>
-        <button class="key-btn blue-btn" onclick="sendCmd('word_left')">
+        <button class="key-btn blue-btn" onclick="sendCmd('word_left')" title="Jump Cursor One Word Left">
           <span class="dot-key-num">&lt;&lt;</span>
           <span class="key-label">WORD</span>
         </button>
-        <button class="key-btn blue-btn" onclick="sendCmd('word_right')">
+        <button class="key-btn blue-btn" onclick="sendCmd('word_right')" title="Jump Cursor One Word Right">
           <span class="dot-key-num">&gt;&gt;</span>
           <span class="key-label">WORD</span>
         </button>
-        <button class="key-btn blue-btn" onclick="setCursorPos(currentFullText.length)">
+        <button class="key-btn blue-btn" onclick="setCursorPos(currentFullText.length)" title="Move Cursor to End of Text">
           <span class="dot-key-num">&gt;|</span>
           <span class="key-label">END</span>
         </button>
 
-        <button class="key-btn cmd" onclick="sendCmd('select_word')">
+        <button class="key-btn cmd" onclick="sendCmd('select_word')" title="Select Current Word">
           <span class="dot-key-num">[W]</span>
           <span class="key-label">SEL WORD</span>
         </button>
-        <button class="key-btn cmd" onclick="sendCmd('select_all')">
+        <button class="key-btn cmd" onclick="sendCmd('select_all')" title="Select All Text">
           <span class="dot-key-num">[A]</span>
           <span class="key-label">SEL ALL</span>
         </button>
-        <button class="key-btn green-btn" onclick="pasteFromClipboard()">
+        <button class="key-btn green-btn" onclick="pasteFromClipboard()" title="Paste Text from Clipboard">
           <span class="dot-key-num">📋</span>
           <span class="key-label">PASTE</span>
         </button>
-        <button class="key-btn red-btn" onclick="confirmClearAll()">
+        <button class="key-btn red-btn" onclick="confirmClearAll()" title="Clear Entire Text Buffer">
           <span class="dot-key-num">🧹</span>
           <span class="key-label">CLEAR ALL</span>
         </button>
@@ -731,60 +731,60 @@
 
       <div class="deck-inline-bar">
         <input type="text" id="qwerty-push-input" class="deck-inline-input" placeholder="Type text to insert onto LCD..." onkeydown="if(event.key==='Enter') pushQwertyText()">
-        <button class="deck-inline-send" onclick="pushQwertyText()">Insert</button>
+        <button class="deck-inline-send" onclick="pushQwertyText()" title="Insert Typed Text onto LCD (Shortcut: Enter in input)">Insert</button>
       </div>
     </div>
 
     <!-- PAGE 3: UEB INDICATORS & CONTRACTIONS DECK -->
     <div class="keypad-page" data-page="2" data-name="UEB Contractions Deck">
       <div class="keypad-grid">
-        <button class="key-btn cmd" onclick="sendCmd('prefix_cap')">
+        <button class="key-btn cmd" onclick="sendCmd('prefix_cap')" title="Insert Capital Letter Indicator (Dot 6)">
           <span class="dot-key-num">⠠</span>
           <span class="key-label">CAP (D6)</span>
         </button>
-        <button class="key-btn cmd" onclick="sendCmd('prefix_capslock')">
+        <button class="key-btn cmd" onclick="sendCmd('prefix_capslock')" title="Insert Caps Lock Word Indicator (Dot 6, Dot 6)">
           <span class="dot-key-num">⠠⠠</span>
           <span class="key-label">CAPS LOCK</span>
         </button>
-        <button class="key-btn blue-btn" onclick="sendCmd('prefix_num')">
+        <button class="key-btn blue-btn" onclick="sendCmd('prefix_num')" title="Insert Number Sign Indicator (Dots 3-4-5-6)">
           <span class="dot-key-num">⠼</span>
           <span class="key-label">NUM SIGN</span>
         </button>
-        <button class="key-btn blue-btn" onclick="sendCmd('prefix_spec')">
+        <button class="key-btn blue-btn" onclick="sendCmd('prefix_spec')" title="Insert Special Symbol Indicator (Dots 4-5-6)">
           <span class="dot-key-num">⠸</span>
           <span class="key-label">SPEC SIGN</span>
         </button>
 
-        <button class="key-btn green-btn" onclick="cycleContractionLang()">
+        <button class="key-btn green-btn" onclick="cycleContractionLang()" title="Switch Contraction Mode (UEB Grade 2 / Filipino / Grade 1)">
           <span class="dot-key-num" id="con-lang-icon">G2</span>
           <span class="key-label" id="con-lang-btn">UEB / FIL</span>
         </button>
-        <button class="key-btn" onclick="insertShortform('about')">
+        <button class="key-btn" onclick="insertShortform('about')" title="Insert UEB Shortform: about (ab)">
           <span class="dot-key-num">ab</span>
           <span class="key-label">about</span>
         </button>
-        <button class="key-btn" onclick="insertShortform('because')">
+        <button class="key-btn" onclick="insertShortform('because')" title="Insert UEB Shortform: because (bbc)">
           <span class="dot-key-num">bbc</span>
           <span class="key-label">because</span>
         </button>
-        <button class="key-btn" onclick="insertShortform('children')">
+        <button class="key-btn" onclick="insertShortform('children')" title="Insert UEB Shortform: children (chn)">
           <span class="dot-key-num">chn</span>
           <span class="key-label">children</span>
         </button>
 
-        <button class="key-btn" onclick="insertShortform('through')">
+        <button class="key-btn" onclick="insertShortform('through')" title="Insert UEB Shortform: through (>th)">
           <span class="dot-key-num">&gt;th</span>
           <span class="key-label">through</span>
         </button>
-        <button class="key-btn" onclick="insertShortform('together')">
+        <button class="key-btn" onclick="insertShortform('together')" title="Insert UEB Shortform: together (tgr)">
           <span class="dot-key-num">tgr</span>
           <span class="key-label">together</span>
         </button>
-        <button class="key-btn" onclick="insertShortform('should')">
+        <button class="key-btn" onclick="insertShortform('should')" title="Insert UEB Shortform: should (shd)">
           <span class="dot-key-num">shd</span>
           <span class="key-label">should</span>
         </button>
-        <button class="key-btn cmd" onclick="openUebCheatModal()">
+        <button class="key-btn cmd" onclick="openUebCheatModal()" title="Browse & Search All UEB / Filipino Contractions">
           <span class="dot-key-num">📖</span>
           <span class="key-label">LIST</span>
         </button>
@@ -794,43 +794,43 @@
     <!-- PAGE 4: MULTI-SLOT FILES, EXPORT & TOOLS DECK -->
     <div class="keypad-page" data-page="3" data-name="Files and Tools Deck">
       <div class="slot-selector-row">
-        <button class="slot-pill active" id="slot-pill-1" onclick="selectMemorySlot(1)">Slot 1</button>
-        <button class="slot-pill" id="slot-pill-2" onclick="selectMemorySlot(2)">Slot 2</button>
-        <button class="slot-pill" id="slot-pill-3" onclick="selectMemorySlot(3)">Slot 3</button>
-        <button class="slot-pill" id="slot-pill-4" onclick="selectMemorySlot(4)">Slot 4</button>
+        <button class="slot-pill active" id="slot-pill-1" onclick="selectMemorySlot(1)" title="Select Memory Slot 1">Slot 1</button>
+        <button class="slot-pill" id="slot-pill-2" onclick="selectMemorySlot(2)" title="Select Memory Slot 2">Slot 2</button>
+        <button class="slot-pill" id="slot-pill-3" onclick="selectMemorySlot(3)" title="Select Memory Slot 3">Slot 3</button>
+        <button class="slot-pill" id="slot-pill-4" onclick="selectMemorySlot(4)" title="Select Memory Slot 4">Slot 4</button>
       </div>
 
       <div class="keypad-grid">
-        <button class="key-btn green-btn" onclick="slotAction('save')">
+        <button class="key-btn green-btn" id="slot-save-btn" onclick="slotAction('save')" title="Save Text to Memory Slot 1">
           <span class="dot-key-num">💾</span>
           <span class="key-label" id="slot-save-lbl">SAVE S1</span>
         </button>
-        <button class="key-btn blue-btn" onclick="slotAction('load')">
+        <button class="key-btn blue-btn" id="slot-load-btn" onclick="slotAction('load')" title="Load Text from Memory Slot 1">
           <span class="dot-key-num">📂</span>
           <span class="key-label" id="slot-load-lbl">LOAD S1</span>
         </button>
-        <button class="key-btn cmd" onclick="downloadNoteFile('txt')">
+        <button class="key-btn cmd" onclick="downloadNoteFile('txt')" title="Download Buffer as Plain Text (.txt)">
           <span class="dot-key-num">.TXT</span>
           <span class="key-label">EXPORT</span>
         </button>
-        <button class="key-btn cmd" onclick="downloadNoteFile('brf')">
+        <button class="key-btn cmd" onclick="downloadNoteFile('brf')" title="Download Buffer as Braille Ready Format (.brf)">
           <span class="dot-key-num">.BRF</span>
           <span class="key-label">BRAILLE</span>
         </button>
 
-        <button class="key-btn cmd" onclick="openCameraModal()">
+        <button class="key-btn cmd" onclick="openCameraModal()" title="Scan Printed Text with Camera OCR">
           <span class="dot-key-num">📷</span>
           <span class="key-label">SCAN OCR</span>
         </button>
-        <button class="key-btn blue-btn" onclick="repeatLastSpeech()">
+        <button class="key-btn blue-btn" onclick="repeatLastSpeech()" title="Repeat Last Spoken Text">
           <span class="dot-key-num">🔁</span>
           <span class="key-label">REPEAT</span>
         </button>
-        <button class="key-btn" onclick="openFlashcardModal()">
+        <button class="key-btn" onclick="openFlashcardModal()" title="Open Braille Flashcard Practice Quiz">
           <span class="dot-key-num">🎓</span>
           <span class="key-label">QUIZ</span>
         </button>
-        <button class="key-btn" onclick="openSettingsModal('sound')">
+        <button class="key-btn" onclick="openSettingsModal('sound')" title="Open Device Settings">
           <span class="dot-key-num">⚙️</span>
           <span class="key-label">SETTINGS</span>
         </button>
@@ -1560,7 +1560,24 @@ function selectMemorySlot(slotNum) {
   }
   document.getElementById('slot-save-lbl').innerText = 'SAVE S' + slotNum;
   document.getElementById('slot-load-lbl').innerText = 'LOAD S' + slotNum;
+
+  const saveBtn = document.getElementById('slot-save-btn');
+  const loadBtn = document.getElementById('slot-load-btn');
+  if (saveBtn) saveBtn.title = 'Save Text to Memory Slot ' + slotNum;
+  if (loadBtn) loadBtn.title = 'Load Text from Memory Slot ' + slotNum;
 }
+
+// Ensure every button (including modals) has a tooltip
+document.querySelectorAll('button').forEach((btn) => {
+  if (!btn.title) {
+    if (btn.classList.contains('modal-close-btn')) {
+      btn.title = 'Close Modal';
+    } else {
+      const label = btn.innerText.replace(/\s+/g, ' ').trim();
+      if (label) btn.title = label;
+    }
+  }
+});
 
 function slotAction(op) {
   fetch(`/api/slot?op=${op}&slot=${selectedSlot}`)
@@ -1733,10 +1750,36 @@ function syncPinLockState(hasPin) {
     if (lockModal) lockModal.classList.remove('active');
   } else {
     isAuthenticated = false;
+    const wasHidden = lockModal && !lockModal.classList.contains('active');
     if (lockModal) lockModal.classList.add('active');
+
+    // Focus the first PIN box as soon as the modal pops up
+    if (wasHidden) {
+      setTimeout(() => {
+        const d1 = document.getElementById('pin-d1');
+        if (d1) d1.focus();
+      }, 60);
+    }
   }
   updateBodyScrollLock();
 }
+
+// Allow Backspace to step backward through PIN boxes & Enter to submit
+[1, 2, 3, 4].forEach((idx) => {
+  const el = document.getElementById('pin-d' + idx);
+  if (!el) return;
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Backspace' && el.value === '' && idx > 1) {
+      const prev = document.getElementById('pin-d' + (idx - 1));
+      if (prev) {
+        prev.value = '';
+        prev.focus();
+      }
+    } else if (e.key === 'Enter') {
+      submitPinAuth();
+    }
+  });
+});
 
 function focusNextPin(currentIdx) {
   const current = document.getElementById('pin-d' + currentIdx);
@@ -3013,6 +3056,80 @@ async function pollState() {
 
 nextFlashcardTarget();
 pollState();
+
+const activeShortcutKeys = new Set();
+
+function triggerShortcutVisual(dataKey) {
+  const btn = document.querySelector(`.key-btn[data-key="${CSS.escape(dataKey)}"]`);
+  if (!btn) return;
+  btn.style.transform = 'translate(2px, 2px)';
+  btn.style.boxShadow = '0px 0px 0px var(--border)';
+  setTimeout(() => {
+    btn.style.transform = '';
+    btn.style.boxShadow = '';
+  }, 110);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!isAuthenticated) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  const keyMap = {
+    // Braille Dots (numpad layout + standard Perkins FDS-JKL)
+    '8': '2', 'f': '2', 'F': '2', // Dot 1
+    '5': '5', 'd': '5', 'D': '5', // Dot 2
+    '2': '8', 's': '8', 'S': '8', // Dot 3
+    '9': '3', 'j': '3', 'J': '3', // Dot 4
+    '6': '6', 'k': '6', 'K': '6', // Dot 5
+    '3': '9', 'l': '9', 'L': '9', // Dot 6
+
+    // Primary Actions
+    ' ': '0', '0': '0',             // Space
+    'Enter': '#',                   // Enter / Confirm Cell
+    'Backspace': 'D', 'Delete': 'D',// Delete / Backspace
+    'ArrowLeft': '7', '4': '7',     // Cursor Left
+    'ArrowRight': 'C',              // Cursor Right
+
+    // Function Keys
+    'u': '1', 'U': '1', 'z': '1', 'Z': '1', // Undo
+    'm': '4', 'M': '4',                     // Mute Toggle
+    'Tab': '*', '*': '*',                   // Cycle Mode
+    '1': 'A',                               // Save
+    '7': 'B'                                // Load
+  };
+
+  // Deck switching with [ and ]
+  if (e.key === '[') {
+    e.preventDefault();
+    stepDeck(-1);
+    return;
+  }
+  if (e.key === ']') {
+    e.preventDefault();
+    stepDeck(1);
+    return;
+  }
+
+  const mappedKey = keyMap[e.key];
+  if (!mappedKey) return;
+
+  e.preventDefault();
+
+  // Allow key-repeat only for Space, Backspace, Left, Right
+  const repeatable = ['0', 'D', '7', 'C'].includes(mappedKey);
+  if (e.repeat && !repeatable) return;
+
+  activeShortcutKeys.add(e.key);
+  triggerShortcutVisual(mappedKey);
+  sendKey(mappedKey);
+});
+
+document.addEventListener('keyup', (e) => {
+  activeShortcutKeys.delete(e.key);
+});
+
 </script>
 </body>
 </html>
