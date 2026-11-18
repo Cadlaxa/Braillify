@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>BRAILLIFY WEB CONTROLLER</title>
+  <title>Braillify Web Controller</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/braillify icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/braillify icon.png">
+  <link rel="apple-touch-icon" href="/braillify icon.png">
   <style>
     :root {
       --bg: #f4f5ff;
@@ -860,7 +863,7 @@
         Disconnected from Braillify
       </p>
       <p style="margin: 0 0 14px; font-size: 0.85rem; opacity: 0.85; line-height: 1.4;">
-        Make sure your Braillify device is powered on and your device is connected to the <strong>Braillify</strong> Wi-Fi network.
+        Make sure your Braillify device is powered on and your device is connected to the <strong>Braillify</strong> Wi-Fi network or the same Wi-Fi network your device and <strong>Braillify</strong> connected.
       </p>
       <div id="disconnect-status-pill" style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 2px solid var(--border); border-radius: 999px; font-size: 0.8rem; font-weight: 700; background: #fff3e0; color: #e65100; margin-bottom: 14px;">
         <span class="reconnect-dot"></span>
@@ -1161,8 +1164,20 @@
     </div>
 
     <div class="settings-tab-pane" id="tab-pane-updates">
+      <div class="setting-group" style="background: var(--bg); border: 2px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 16px; text-align: left;">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+          <div>
+            <div style="font-size: 0.85rem; font-weight: 800; color: var(--text);">🔄 Auto-Update on Startup</div>
+            <div style="font-size: 0.72rem; font-weight: 600; color: #57606a; margin-top: 2px;">
+              Scrolls update prompt on LCD at boot (<strong>ENTER #</strong> = Update, <strong>SPACE 0</strong> = Cancel)
+            </div>
+          </div>
+          <input type="checkbox" id="auto-update-toggle" onchange="setAutoUpdate(this.checked)" style="width: 22px; height: 22px; accent-color: var(--orange-dark); cursor: pointer; flex-shrink: 0;">
+        </div>
+      </div>
+
       <div class="ota-section">
-        <div class="setting-header" style="margin-bottom:8px;"><span>⚡ Firmware Update</span></div>
+        <div class="setting-header" style="margin-bottom:8px;"><span>⚡ Manual Firmware Update</span></div>
         <p style="font-size: 0.8rem; color: #57606a; margin-bottom: 14px; font-weight: 600;">Check GitHub releases for the latest firmware binary over Wi-Fi.</p>
         <button id="ota-btn" onclick="triggerOtaUpdate()" class="btn-update">
           ⚡ Check & Update Firmware (GitHub OTA)
@@ -1359,11 +1374,6 @@ function setActiveDeckUI(idx, announce = false) {
 })();
 
 /* ---------- DECK COMMANDS & SHORTFORMS ---------- */
-function sendCmd(action, val = null) {
-  let url = '/api/cmd?action=' + encodeURIComponent(action);
-  if (val !== null) url += '&val=' + encodeURIComponent(val);
-  fetch(url).then(r => r.json()).then(d => updateState(d));
-}
 
 function confirmClearAll() {
   if (!currentFullText) return;
@@ -2134,6 +2144,14 @@ function setTtsMode(val) {
     .then(d => updateState(d));
 }
 
+let currentAutoUpdate = false;
+function setAutoUpdate(enabled) {
+  currentAutoUpdate = Boolean(enabled);
+  fetch('/api/settings?autoUpdate=' + (currentAutoUpdate ? 1 : 0))
+    .then(r => r.json())
+    .then(d => updateState(d));
+}
+
 let cameraStream = null;
 function openCameraModal(){
   document.getElementById('camera-modal').classList.add('active');
@@ -2900,11 +2918,18 @@ function deleteSelectionWeb() {
   sendKey('D');
 }
 
-function setCursorPos(idx){ fetch('/api/setcursor?pos=' + idx).then(r => r.json()).then(d => updateState(d)); }
-function sendKey(k){ 
-  fetch('/api/key?k=' + encodeURIComponent(k))
-    .then(r => r.json())
-    .then(d => updateState(d)); 
+function setCursorPos(idx) {
+  apiFetch('/api/setcursor?pos=' + idx).then(d => updateState(d)).catch(() => {});
+}
+
+function sendKey(k) {
+  apiFetch('/api/key?k=' + encodeURIComponent(k)).then(d => updateState(d)).catch(() => {});
+}
+
+function sendCmd(action, val = null) {
+  let url = '/api/cmd?action=' + encodeURIComponent(action);
+  if (val !== null) url += '&val=' + encodeURIComponent(val);
+  apiFetch(url).then(d => updateState(d)).catch(() => {});
 }
 
 function startKeyHold(k){
@@ -2958,21 +2983,31 @@ function updateWifiSignalUI(connected, rssi) {
   else symbolEl.innerText = '📶';
 }
 
-let currentBootId = null;
+const DEV_MODE =
+  new URLSearchParams(window.location.search).get('dev') === '1' ||
+  ['127.0.0.1', 'localhost'].includes(window.location.hostname);
 
+let currentBootId = null;
 let failedPollCount = 0;
 let isDeviceDisconnected = false;
-const DISCONNECT_THRESHOLD = 2; // Show modal after 2 consecutive failed checks
+let pollTimer = null;
+const DISCONNECT_THRESHOLD = 2;
 
-function setDisconnectedState(disconnected) {
+function setDisconnectedState(disconnected, force = false) {
+  if (DEV_MODE && !force) return;
+
   const modal = document.getElementById('disconnect-modal');
+  const statusText = document.getElementById('disconnect-status-text');
   if (!modal) return;
 
-  if (disconnected && !isDeviceDisconnected) {
-    isDeviceDisconnected = true;
-    modal.classList.add('active');
-    if (typeof updateBodyScrollLock === 'function') updateBodyScrollLock();
-  } else if (!disconnected && isDeviceDisconnected) {
+  if (disconnected) {
+    if (!isDeviceDisconnected) {
+      isDeviceDisconnected = true;
+      modal.classList.add('active');
+      if (typeof updateBodyScrollLock === 'function') updateBodyScrollLock();
+    }
+    if (statusText) statusText.innerText = 'Reconnecting automatically...';
+  } else if (isDeviceDisconnected) {
     isDeviceDisconnected = false;
     failedPollCount = 0;
     modal.classList.remove('active');
@@ -2980,7 +3015,38 @@ function setDisconnectedState(disconnected) {
   }
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 3000) {
+async function apiFetch(url, timeoutMs = 2000) {
+  if (DEV_MODE) return Promise.reject(new Error('DEV_MODE active'));
+
+  let res;
+  try {
+    res = await fetchWithTimeout(url, {}, timeoutMs);
+  } catch (err) {
+    // Actual network drop or timeout
+    if (err.name !== 'AbortError') {
+      failedPollCount = DISCONNECT_THRESHOLD;
+      setDisconnectedState(true);
+    } else {
+      failedPollCount++;
+      if (failedPollCount >= DISCONNECT_THRESHOLD) setDisconnectedState(true);
+    }
+    throw err;
+  }
+
+  if (!res.ok) {
+    failedPollCount++;
+    if (failedPollCount >= DISCONNECT_THRESHOLD) setDisconnectedState(true);
+    throw new Error('HTTP ' + res.status);
+  }
+
+  // Server responded -> device is connected
+  failedPollCount = 0;
+  setDisconnectedState(false);
+
+  return await res.json();
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 1800) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -2990,6 +3056,12 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 3000) {
   }
 }
 
+function scheduleNextPoll() {
+  clearTimeout(pollTimer);
+  const interval = isDeviceDisconnected ? 1200 : (document.hidden ? 1000 : 300);
+  pollTimer = setTimeout(pollState, interval);
+}
+
 async function manualReconnectCheck() {
   const btn = document.getElementById('retry-connect-btn');
   const statusText = document.getElementById('disconnect-status-text');
@@ -2997,13 +3069,9 @@ async function manualReconnectCheck() {
   if (statusText) statusText.innerText = 'Checking connection...';
 
   try {
-    const res = await fetchWithTimeout('/api/state', {}, 2500);
-    if (res.ok) {
-      setDisconnectedState(false);
-      if (typeof pollState === 'function') pollState();
-    } else if (statusText) {
-      statusText.innerText = 'Still unreachable. Retrying...';
-    }
+    const d = await apiFetch('/api/state', 2000);
+    updateState(d);
+    scheduleNextPoll();
   } catch (err) {
     if (statusText) statusText.innerText = 'Still unreachable. Retrying...';
   } finally {
@@ -3011,7 +3079,6 @@ async function manualReconnectCheck() {
   }
 }
 
-// Instant browser offline/online hooks
 window.addEventListener('offline', () => setDisconnectedState(true));
 window.addEventListener('online', () => manualReconnectCheck());
 
@@ -3082,6 +3149,14 @@ function updateState(d){
     }
   }
 
+  if (d.autoUpdate !== undefined) {
+    currentAutoUpdate = Boolean(d.autoUpdate);
+    const autoUpdEl = document.getElementById('auto-update-toggle');
+    if (autoUpdEl && document.activeElement !== autoUpdEl) {
+      autoUpdEl.checked = currentAutoUpdate;
+    }
+  }
+
   currentFullText = d.fullText || "";
   currentCursorPos = d.cursor || 0;
 
@@ -3124,28 +3199,19 @@ async function triggerOtaUpdate() {
 }
 
 let isPolling = false;
-let isPolling = false;
 async function pollState() {
-  if (isPolling) return;
+  if (DEV_MODE || isPolling) return;
   isPolling = true;
+  clearTimeout(pollTimer);
 
   try {
-    const res = await fetchWithTimeout('/api/state', {}, 3000);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-
-    const d = await res.json();
-    failedPollCount = 0;
-    setDisconnectedState(false);
+    const d = await apiFetch('/api/state', 1800);
     updateState(d);
   } catch (e) {
-    failedPollCount++;
-    if (failedPollCount >= DISCONNECT_THRESHOLD) {
-      setDisconnectedState(true);
-    }
+    // Handled by apiFetch()
   } finally {
     isPolling = false;
-    const interval = isDeviceDisconnected ? 1500 : (document.hidden ? 1000 : 300);
-    setTimeout(pollState, interval);
+    scheduleNextPoll();
   }
 }
 

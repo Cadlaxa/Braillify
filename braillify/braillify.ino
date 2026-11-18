@@ -14,7 +14,7 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.7"
+#define FIRMWARE_VERSION "1.0.7.1"
 
 Preferences prefs;
 uint32_t bootId = 0;
@@ -44,6 +44,7 @@ WebServer server(80);
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
 const IPAddress apIP(192, 168, 4, 1);
+bool autoUpdateOnBoot = true;
 
 // Wi-Fi Configuration State
 String wifiSSID = "";
@@ -534,6 +535,69 @@ void updateLCDWifiIcon() {
   } else {
     lcd.write(4);                        // AP Icon
   }
+}
+
+void checkBootAutoUpdate() {
+  if (!autoUpdateOnBoot) return;
+
+  // Wait briefly if Wi-Fi is still connecting on boot
+  unsigned long wifiWaitStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiWaitStart < 5000) {
+    delay(100);
+  }
+
+  // Skip prompt if offline so normal offline usage isn't delayed
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  String scrollMsg = "    Press ENTER (#) to Update, SPACE (0) to Cancel    ";
+  int scrollIdx = 0;
+  unsigned long lastScrollMs = 0;
+  unsigned long promptStartMs = millis();
+  const unsigned long PROMPT_TIMEOUT_MS = 15000;
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("AUTO UPDATE?    ");
+
+  while (millis() - promptStartMs < PROMPT_TIMEOUT_MS) {
+    // Scroll message smoothly across LCD line 1 every 280ms
+    if (millis() - lastScrollMs >= 280) {
+      lastScrollMs = millis();
+      String window = scrollMsg.substring(scrollIdx, scrollIdx + 16);
+      lcd.setCursor(0, 1);
+      lcd.print(window);
+
+      scrollIdx++;
+      if (scrollIdx > (int)scrollMsg.length() - 16) {
+        scrollIdx = 0;
+      }
+    }
+
+    // Poll physical 4x4 keypad
+    char key = keypad.getKey();
+    if (key == '#') {
+      sound(1200, 100);
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Starting Update ");
+      lcd.setCursor(0, 1);
+      lcd.print("Please wait...  ");
+      updateFirmwareFromGitHub("");
+      return;
+    } else if (key == '0') {
+      sound(600, 80);
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Update Cancelled");
+      smartDelay(800);
+      return;
+    }
+
+    delay(15);
+  }
+
+  // Timeout reached -> proceed to normal mode
+  lcd.clear();
 }
 
 void redrawLCDLine() {
@@ -1660,6 +1724,11 @@ void handleApiSettings() {
   bool volumeUpdated = false;
   bool modeChanged = false;
 
+  if (server.hasArg("autoUpdate")) {
+    autoUpdateOnBoot = (server.arg("autoUpdate").toInt() == 1);
+    prefs.putBool("autoUpdate", autoUpdateOnBoot);
+  }
+
   if (server.hasArg("brightness")) {
     lcdBrightness = server.arg("brightness").toInt();
     lcdBrightness = constrain(lcdBrightness, 0, 100);
@@ -1802,7 +1871,7 @@ void getSystemStateJson(String &jsonOut) {
   jsonOut += "\"selEnd\":" + String(selectEnd) + ",";
   jsonOut += "\"ttsMode\":" + String(ttsMode) + ",";
   jsonOut += "\"contractionMode\":" + String(contractionMode) + ",";
-  jsonOut += "\"preview\":\"" + preview + "\",";
+  jsonOut += "\"preview\":\"" + escapeJsonString(preview) + "\",";
   jsonOut += "\"lcd0\":\"" + line0 + "\",";
   jsonOut += "\"lcd1\":\"" + line1 + "\",";
   jsonOut += "\"fullText\":\"" + safeFullText + "\",";
@@ -1812,7 +1881,8 @@ void getSystemStateJson(String &jsonOut) {
   jsonOut += "\"rssi\":" + String(currentRssi) + ",";
   jsonOut += "\"brightness\":" + String(lcdBrightness) + ",";
   jsonOut += "\"volume\":" + String(reportedVolume) + ",";
-  jsonOut += "\"feedbackMode\":" + String((int)feedbackMode);
+  jsonOut += "\"feedbackMode\":" + String((int)feedbackMode) + ",";
+  jsonOut += "\"autoUpdate\":" + String(autoUpdateOnBoot ? "true" : "false");
   jsonOut += "}";
 }
 
@@ -2013,7 +2083,9 @@ void setup() {
   lcdBrightness = prefs.getInt("bright", 100);
   soundVolume = prefs.getInt("vol", 100);
   ttsMode = prefs.getInt("ttsMode", 1);
+  contractionMode = prefs.getInt("conMode", 0);
   isSetupDone = prefs.getBool("setupDone", false);
+  autoUpdateOnBoot = prefs.getBool("autoUpdate", true);
   prefs.end();
   loadSecurityPreferences();
   applyBrightness(lcdBrightness);
@@ -2027,7 +2099,6 @@ void setup() {
   dnsServer.start(DNS_PORT, "*", apIP);
 
   autoConnectWifi();
-
   const char* headerKeys[] = {"User-Agent"};
   server.collectHeaders(headerKeys, 1);
 
@@ -2065,6 +2136,15 @@ void setup() {
   server.on("/connecttest.txt", handleCaptivePortal);
   server.on("/redirect", handleCaptivePortal);
   server.on("/canonical.html", handleCaptivePortal);
+  server.on("/braillify icon.png", HTTP_GET, []() {
+  if (LittleFS.exists("/braillify icon.png")) {
+    File file = LittleFS.open("/braillify icon.png", "r");
+    server.streamFile(file, "image/png");
+    file.close();
+  } else {
+    server.send(404, "text/plain", "Icon not found");
+  }
+});
   
   server.on("/api/ota_update", HTTP_GET, []() {
     String defaultUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/firmware.bin";
