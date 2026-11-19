@@ -168,6 +168,7 @@ void loadLineFromEEPROM();
 void handleSpaceKeyDirect();
 void sound(int freq, int dur);
 void vibrate(int durationMs, int strength);
+void smartDelay(unsigned long ms);
 void startupTone();
 void saveTone();
 void loadTone();
@@ -175,12 +176,19 @@ void enterTone();
 void modeTone();
 void errorTone();
 void scanTone();
+void connectionTone();
 void updateFirmwareFromGitHub(const String& binUrl);
+void checkBootAutoUpdate();
+char getHeldKey();
 void applyBrightness(int percent);
 byte charToBraille(char c);
 void handleCaptivePortal();
 void autoConnectWifi();
 void checkWifiStatus();
+void pushUndoState();
+void handleApiState();
+void showFeedbackMode();
+String lookupUebSymbolPair(byte prefix, byte cell);
 
 // Text Selection Helpers
 bool hasSelection() {
@@ -537,29 +545,117 @@ void updateLCDWifiIcon() {
   }
 }
 
+String extractJsonStringField(const String& payload, const String& key) {
+  int keyIdx = payload.indexOf("\"" + key + "\"");
+  if (keyIdx == -1) return "";
+  int colonIdx = payload.indexOf(":", keyIdx + key.length() + 2);
+  if (colonIdx == -1) return "";
+  int firstQuote = payload.indexOf("\"", colonIdx + 1);
+  if (firstQuote == -1) return "";
+  int secondQuote = payload.indexOf("\"", firstQuote + 1);
+  if (secondQuote == -1) return "";
+  String val = payload.substring(firstQuote + 1, secondQuote);
+  val.trim();
+  return val;
+}
+
+bool isNewerVersion(String remoteVer, String localVer) {
+  if (remoteVer.startsWith("v") || remoteVer.startsWith("V")) remoteVer.remove(0, 1);
+  if (localVer.startsWith("v") || localVer.startsWith("V")) localVer.remove(0, 1);
+  if (remoteVer.length() == 0 || remoteVer == localVer) return false;
+
+  int rStart = 0, lStart = 0;
+  while (rStart < (int)remoteVer.length() || lStart < (int)localVer.length()) {
+    int rDot = remoteVer.indexOf('.', rStart);
+    int lDot = localVer.indexOf('.', lStart);
+    int rNum = (rStart < (int)remoteVer.length())
+                 ? remoteVer.substring(rStart, rDot == -1 ? remoteVer.length() : rDot).toInt()
+                 : 0;
+    int lNum = (lStart < (int)localVer.length())
+                 ? localVer.substring(lStart, lDot == -1 ? localVer.length() : lDot).toInt()
+                 : 0;
+    if (rNum > lNum) return true;
+    if (rNum < lNum) return false;
+    rStart = (rDot == -1) ? remoteVer.length() : rDot + 1;
+    lStart = (lDot == -1) ? localVer.length() : lDot + 1;
+  }
+  return false;
+}
+
 void checkBootAutoUpdate() {
   if (!autoUpdateOnBoot) return;
 
-  // Wait briefly if Wi-Fi is still connecting on boot
+  // Wait up to 18s for STA Wi-Fi connection (allows DHCP + saved-network fallback)
   unsigned long wifiWaitStart = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiWaitStart < 5000) {
-    delay(100);
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiWaitStart < 18000) {
+    checkWifiStatus();
+    smartDelay(100);
   }
 
   // Skip prompt if offline so normal offline usage isn't delayed
   if (WiFi.status() != WL_CONNECTED) return;
 
-  String scrollMsg = "    Press ENTER (#) to Update, SPACE (0) to Cancel    ";
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Checking Update.");
+  lcd.setCursor(0, 1);
+  lcd.print("v" FIRMWARE_VERSION " ...");
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  String latestVersion = "";
+  HTTPClient http;
+  http.setTimeout(8000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+  // 1. Try manifest.json first
+  String manifestUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/manifest.json";
+  if (http.begin(client, manifestUrl)) {
+    http.addHeader("User-Agent", "Braillify-ESP32");
+    if (http.GET() == HTTP_CODE_OK) {
+      latestVersion = extractJsonStringField(http.getString(), "version");
+    }
+    http.end();
+  }
+
+  // 2. Fallback to GitHub Releases API tag_name if manifest.json wasn't present
+  if (latestVersion.length() == 0) {
+    String apiUrl = "https://api.github.com/repos/Cadlaxa/Braillify/releases/latest";
+    if (http.begin(client, apiUrl)) {
+      http.addHeader("User-Agent", "Braillify-ESP32");
+      if (http.GET() == HTTP_CODE_OK) {
+        latestVersion = extractJsonStringField(http.getString(), "tag_name");
+      }
+      http.end();
+    }
+  }
+
+  if (latestVersion.startsWith("v") || latestVersion.startsWith("V")) {
+    latestVersion = latestVersion.substring(1);
+  }
+
+  // Only prompt if a newer version is confirmed available on GitHub
+  if (!isNewerVersion(latestVersion, FIRMWARE_VERSION)) {
+    lcd.clear();
+    return;
+  }
+
+  String scrollMsg = "    v" + latestVersion + " Ready! ENTER (#)=Update, SPACE (0)=Cancel    ";
   int scrollIdx = 0;
   unsigned long lastScrollMs = 0;
   unsigned long promptStartMs = millis();
   const unsigned long PROMPT_TIMEOUT_MS = 15000;
+  char prevHeldKey = NO_KEY;
 
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("AUTO UPDATE?    ");
+  lcd.print("Update v" + latestVersion);
 
   while (millis() - promptStartMs < PROMPT_TIMEOUT_MS) {
+    dnsServer.processNextRequest();
+    server.handleClient();
+
     // Scroll message smoothly across LCD line 1 every 280ms
     if (millis() - lastScrollMs >= 280) {
       lastScrollMs = millis();
@@ -573,24 +669,29 @@ void checkBootAutoUpdate() {
       }
     }
 
-    // Poll physical 4x4 keypad
-    char key = keypad.getKey();
-    if (key == '#') {
-      sound(1200, 100);
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("Starting Update ");
-      lcd.setCursor(0, 1);
-      lcd.print("Please wait...  ");
-      updateFirmwareFromGitHub("");
-      return;
-    } else if (key == '0') {
-      sound(600, 80);
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("Update Cancelled");
-      smartDelay(800);
-      return;
+    // Poll physical 4x4 keypad using getHeldKey() with edge detection
+    char key = getHeldKey();
+    if (key != NO_KEY && key != prevHeldKey) {
+      prevHeldKey = key;
+      if (key == '#') {
+        sound(1200, 100);
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Starting Update ");
+        lcd.setCursor(0, 1);
+        lcd.print("Please wait...  ");
+        updateFirmwareFromGitHub("");
+        return;
+      } else if (key == '0') {
+        sound(600, 80);
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Update Cancelled");
+        smartDelay(800);
+        return;
+      }
+    } else if (key == NO_KEY) {
+      prevHeldKey = NO_KEY;
     }
 
     delay(15);
@@ -1305,6 +1406,23 @@ void handleApiCmd() {
   handleApiState();
 }
 
+void handleApiCell() {
+  if (server.hasArg("bits")) {
+    byte mask = (byte)(server.arg("bits").toInt() & 0x3F);
+    brailleBits = mask;
+
+    bool shouldCommit = !server.hasArg("commit") || (server.arg("commit").toInt() == 1);
+    if (shouldCommit && brailleBits > 0) {
+      enterTone();
+      handleHashSinglePress();
+      brailleBits = 0;
+    } else {
+      sound(2400, 50);
+    }
+  }
+  handleApiState();
+}
+
 void handleApiSlot() {
   int slot = server.hasArg("slot") ? constrain(server.arg("slot").toInt(), 1, 4) : 1;
   String op = server.hasArg("op") ? server.arg("op") : "load";
@@ -1966,14 +2084,7 @@ void updateFirmwareFromGitHub(const String& binUrl) {
 
   if (httpCode == HTTP_CODE_OK) {
     String payload = http.getString();
-    int verIndex = payload.indexOf("\"version\": \"");
-    if (verIndex != -1) {
-      int start = verIndex + 12;
-      int end = payload.indexOf("\"", start);
-      if (end != -1) {
-        latestVersion = payload.substring(start, end);
-      }
-    }
+    latestVersion = extractJsonStringField(payload, "version");
   }
   http.end();
 
@@ -2089,7 +2200,6 @@ void setup() {
   prefs.end();
   loadSecurityPreferences();
   applyBrightness(lcdBrightness);
-  contractionMode = prefs.getInt("conMode", 0);
 
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
@@ -2125,6 +2235,7 @@ void setup() {
   server.on("/api/insert", handleApiInsert);
   server.on("/api/cmd", handleApiCmd);
   server.on("/api/slot", handleApiSlot);
+  server.on("/api/cell", handleApiCell);
 
   server.on("/hotspot-detect.html", handleAppleCaptive);
   server.on("/library/test/success.html", handleAppleCaptive);
@@ -2137,14 +2248,14 @@ void setup() {
   server.on("/redirect", handleCaptivePortal);
   server.on("/canonical.html", handleCaptivePortal);
   server.on("/braillify icon.png", HTTP_GET, []() {
-  if (LittleFS.exists("/braillify icon.png")) {
-    File file = LittleFS.open("/braillify icon.png", "r");
-    server.streamFile(file, "image/png");
-    file.close();
-  } else {
-    server.send(404, "text/plain", "Icon not found");
-  }
-});
+    if (LittleFS.exists("/braillify icon.png")) {
+      File file = LittleFS.open("/braillify icon.png", "r");
+      server.streamFile(file, "image/png");
+      file.close();
+    } else {
+      server.send(404, "text/plain", "Icon not found");
+    }
+  });
   
   server.on("/api/ota_update", HTTP_GET, []() {
     String defaultUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/firmware.bin";
@@ -2206,7 +2317,11 @@ void setup() {
 
   startUP();
 
+  // Check for GitHub OTA update on boot if enabled
+  checkBootAutoUpdate();
+
   updateLCDMode();
+  redrawLCDLine();
   lcd.setCursor(getLcdCursor(), 1);
   lcd.cursor();
   lcd.blink();
