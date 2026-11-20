@@ -14,7 +14,7 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.7.1"
+#define FIRMWARE_VERSION "1.0.7.2"
 
 Preferences prefs;
 uint32_t bootId = 0;
@@ -585,14 +585,14 @@ bool isNewerVersion(String remoteVer, String localVer) {
 void checkBootAutoUpdate() {
   if (!autoUpdateOnBoot) return;
 
-  // Wait up to 18s for STA Wi-Fi connection (allows DHCP + saved-network fallback)
+  // Wait up to 8s only while an active saved-Wi-Fi connection attempt is in progress
   unsigned long wifiWaitStart = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiWaitStart < 18000) {
+  while (WiFi.status() != WL_CONNECTED && isConnecting && (millis() - wifiWaitStart < 8000)) {
     checkWifiStatus();
     smartDelay(100);
   }
 
-  // Skip prompt if offline so normal offline usage isn't delayed
+  // Exit immediately if offline or no saved network connected
   if (WiFi.status() != WL_CONNECTED) return;
 
   lcd.clear();
@@ -601,26 +601,31 @@ void checkBootAutoUpdate() {
   lcd.setCursor(0, 1);
   lcd.print("v" FIRMWARE_VERSION " ...");
 
+  const unsigned long checkDeadline = millis() + 6000; // Hard 6-second limit for network check
+
   WiFiClientSecure client;
   client.setInsecure();
+  client.setTimeout(3); // 3-second TLS/socket timeout (in seconds)
 
   String latestVersion = "";
   HTTPClient http;
-  http.setTimeout(8000);
+  http.setConnectTimeout(3000);
+  http.setTimeout(3000);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
   // 1. Try manifest.json first
   String manifestUrl = "https://github.com/Cadlaxa/Braillify/releases/latest/download/manifest.json";
   if (http.begin(client, manifestUrl)) {
     http.addHeader("User-Agent", "Braillify-ESP32");
-    if (http.GET() == HTTP_CODE_OK) {
+    int code = http.GET();
+    if (code == HTTP_CODE_OK) {
       latestVersion = extractJsonStringField(http.getString(), "version");
     }
     http.end();
   }
 
-  // 2. Fallback to GitHub Releases API tag_name if manifest.json wasn't present
-  if (latestVersion.length() == 0) {
+  // 2. Only try GitHub Releases API fallback if we still have time remaining before deadline
+  if (latestVersion.length() == 0 && millis() < checkDeadline) {
     String apiUrl = "https://api.github.com/repos/Cadlaxa/Braillify/releases/latest";
     if (http.begin(client, apiUrl)) {
       http.addHeader("User-Agent", "Braillify-ESP32");
@@ -635,7 +640,7 @@ void checkBootAutoUpdate() {
     latestVersion = latestVersion.substring(1);
   }
 
-  // Only prompt if a newer version is confirmed available on GitHub
+  // Abort if offline/timed out or no newer version is confirmed
   if (!isNewerVersion(latestVersion, FIRMWARE_VERSION)) {
     lcd.clear();
     return;
@@ -645,7 +650,7 @@ void checkBootAutoUpdate() {
   int scrollIdx = 0;
   unsigned long lastScrollMs = 0;
   unsigned long promptStartMs = millis();
-  const unsigned long PROMPT_TIMEOUT_MS = 15000;
+  const unsigned long PROMPT_TIMEOUT_MS = 10000; // 10-second prompt timeout
   char prevHeldKey = NO_KEY;
 
   lcd.clear();
@@ -656,7 +661,6 @@ void checkBootAutoUpdate() {
     dnsServer.processNextRequest();
     server.handleClient();
 
-    // Scroll message smoothly across LCD line 1 every 280ms
     if (millis() - lastScrollMs >= 280) {
       lastScrollMs = millis();
       String window = scrollMsg.substring(scrollIdx, scrollIdx + 16);
@@ -669,7 +673,6 @@ void checkBootAutoUpdate() {
       }
     }
 
-    // Poll physical 4x4 keypad using getHeldKey() with edge detection
     char key = getHeldKey();
     if (key != NO_KEY && key != prevHeldKey) {
       prevHeldKey = key;
@@ -697,7 +700,6 @@ void checkBootAutoUpdate() {
     delay(15);
   }
 
-  // Timeout reached -> proceed to normal mode
   lcd.clear();
 }
 

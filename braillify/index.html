@@ -444,7 +444,7 @@
         max-width: 98%;
         height: 100vh;
         height: 100dvh;
-        max-height: 100dvh;
+        max-height: 90dvh;
         border-radius: 8px;
         padding: 8px 12px;
         row-gap: 4px;
@@ -544,6 +544,67 @@
 
       .camera-box {
         height: 130px;
+      }
+    }
+
+    #disconnect-modal {
+      --pill-margin: clamp(10px, 2vw, 20px);
+      --pill-bottom-offset: 10px;
+      display: none;
+      position: fixed;
+      z-index: 9999;
+      background: #fff3e0;
+      color: #e65100;
+      border: 2px solid var(--border);
+      box-shadow: 3px 3px 0px var(--border);
+      border-radius: 999px;
+      padding: 6px 12px;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.75rem;
+      font-weight: 800;
+      max-width: calc(100vw - (var(--pill-margin) * 2));
+      touch-action: none;
+      user-select: none;
+      cursor: grab;
+      transition: top 0.22s ease, bottom 0.22s ease, left 0.22s ease, right 0.22s ease, transform 0.15s ease;
+    }
+
+    #disconnect-modal.dragging {
+      cursor: grabbing;
+      transition: none;
+    }
+
+    /* Corner presets */
+    #disconnect-modal[data-pos="bottom-right"] {
+      right: calc(var(--pill-margin) + env(safe-area-inset-right, 0px));
+      bottom: calc(var(--pill-margin) + env(safe-area-inset-bottom, 0px) + var(--pill-bottom-offset));
+    }
+    #disconnect-modal[data-pos="bottom-left"] {
+      left: calc(var(--pill-margin) + env(safe-area-inset-left, 0px));
+      bottom: calc(var(--pill-margin) + env(safe-area-inset-bottom, 0px) + var(--pill-bottom-offset));
+    }
+    #disconnect-modal[data-pos="top-right"] {
+      right: calc(var(--pill-margin) + env(safe-area-inset-right, 0px));
+      top: calc(var(--pill-margin) + env(safe-area-inset-top, 0px));
+    }
+    #disconnect-modal[data-pos="top-left"] {
+      left: calc(var(--pill-margin) + env(safe-area-inset-left, 0px));
+      top: calc(var(--pill-margin) + env(safe-area-inset-top, 0px));
+    }
+    /* Centered at bottom on very narrow screens unless dragged elsewhere */
+    @media (max-width: 480px) {
+      #disconnect-modal[data-pos="auto"] {
+        --pill-bottom-offset: 30px;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: calc(var(--pill-margin) + env(safe-area-inset-bottom, 0px) + var(--pill-bottom-offset));
+      }
+    }
+    @media (min-width: 481px) {
+      #disconnect-modal[data-pos="auto"] {
+        right: calc(var(--pill-margin) + env(safe-area-inset-right, 0px));
+        bottom: calc(var(--pill-margin) + env(safe-area-inset-bottom, 0px) + var(--pill-bottom-offset));
       }
     }
   </style>
@@ -847,30 +908,11 @@
   <div class="footer">BRAILLIFY: http://braillify.local</div>
 </div>
 
-<!-- DISCONNECTED FROM DEVICE MODAL -->
-<div class="modal-overlay" id="disconnect-modal" style="z-index: 9999;">
-  <div class="modal-content" style="max-width: 380px; text-align: center;">
-    <div class="modal-header" style="justify-content: center; border-bottom: 2px solid var(--border); padding-bottom: 10px;">
-      <h2 style="margin: 0; font-size: 1.15rem; color: #c62828;">📡 Connection Lost</h2>
-    </div>
-    <div style="padding: 16px 12px;">
-      <p style="margin: 0 0 10px; font-weight: 700; font-size: 0.95rem;">
-        Disconnected from Braillify
-      </p>
-      <p style="margin: 0 0 14px; font-size: 0.85rem; opacity: 0.85; line-height: 1.4;">
-        Make sure your Braillify device is powered on and your device is connected to the <strong>Braillify</strong> Wi-Fi network or the same Wi-Fi network your device and <strong>Braillify</strong> connected.
-      </p>
-      <div id="disconnect-status-pill" style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 2px solid var(--border); border-radius: 999px; font-size: 0.8rem; font-weight: 700; background: #fff3e0; color: #e65100; margin-bottom: 14px;">
-        <span class="reconnect-dot"></span>
-        <span id="disconnect-status-text">Reconnecting automatically...</span>
-      </div>
-      <div>
-        <button class="action-btn" id="retry-connect-btn" onclick="manualReconnectCheck()" style="width: 100%; padding: 10px; font-weight: 800; justify-content: center;">
-          🔄 Retry Now
-        </button>
-      </div>
-    </div>
-  </div>
+<!-- DISCREET RECONNECT PILL -->
+<div id="disconnect-modal" data-pos="auto">
+  <span class="reconnect-dot"></span>
+  <span id="disconnect-status-text">Offline • Reconnecting...</span>
+  <button id="retry-connect-btn" onclick="manualReconnectCheck()" style="background: #ffffff; border: 1.5px solid var(--border); border-radius: 999px; padding: 2px 8px; font-size: 0.7rem; font-weight: 800; color: var(--text); cursor: pointer;">Retry</button>
 </div>
 
 <!-- UEB / FILIPINO CONTRACTION CHEAT-SHEET MODAL -->
@@ -3204,27 +3246,25 @@ let currentBootId = null;
 let failedPollCount = 0;
 let isDeviceDisconnected = false;
 let pollTimer = null;
-const DISCONNECT_THRESHOLD = 2;
+const DISCONNECT_THRESHOLD = 4; // Ignore brief 1-2 poll hiccups
 
 function setDisconnectedState(disconnected, force = false) {
   if (DEV_MODE && !force) return;
 
-  const modal = document.getElementById('disconnect-modal');
+  const pill = document.getElementById('disconnect-modal');
   const statusText = document.getElementById('disconnect-status-text');
-  if (!modal) return;
+  if (!pill) return;
 
   if (disconnected) {
     if (!isDeviceDisconnected) {
       isDeviceDisconnected = true;
-      modal.classList.add('active');
-      if (typeof updateBodyScrollLock === 'function') updateBodyScrollLock();
+      pill.style.display = 'inline-flex';
     }
-    if (statusText) statusText.innerText = 'Reconnecting automatically...';
+    if (statusText) statusText.innerText = 'Offline • Reconnecting...';
   } else if (isDeviceDisconnected) {
     isDeviceDisconnected = false;
     failedPollCount = 0;
-    modal.classList.remove('active');
-    if (typeof updateBodyScrollLock === 'function') updateBodyScrollLock();
+    pill.style.display = 'none';
   }
 }
 
