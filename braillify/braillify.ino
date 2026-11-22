@@ -9,6 +9,7 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include "web_pages.h"
+#include "update_page.h"
 #include <Update.h>
 #include <WiFiClientSecure.h>
 #include <HTTPUpdate.h>
@@ -330,7 +331,7 @@ String brailleToChar(byte bits, bool commitState = true) {
 
   // Dot 6 (Capitalization Indicator)
   if (pattern == 32) {
-    if (!commitState) return "^"; 
+    if (!commitState) return "^";
     if (dot6PressedOnce) {
       capsLock = true;
       nextCapital = false;
@@ -365,7 +366,7 @@ String brailleToChar(byte bits, bool commitState = true) {
   }
   if (commitState && pattern != 60) numPressedOnce = false;
 
-  // Special Indicator
+  // Special Indicator (Dots 4-5-6)
   if (pattern == 56) {
     if (!commitState) return "$";
     if (specialPressedOnce) {
@@ -386,15 +387,9 @@ String brailleToChar(byte bits, bool commitState = true) {
   }
   if (commitState && pattern != 56) specialPressedOnce = false;
 
-  // Text Indicator
-  if (pattern == 48) {
-    if (!commitState) return ">"; // Pure UI preview only
-
-    bool afterLetter = (cursorPos > 0 && isAlpha(fullBuffer[cursorPos - 1]));
-    if (afterLetter) {
-      textPressedOnce = false;
-      return ">"; 
-    }
+  // Text Indicator (Dots 5-6)
+  if (pattern == 48 && !nextSpecial && !specialLock && currentMode != SPECIAL) {
+    if (!commitState) return ">";
 
     if (textPressedOnce) {
       textLock = true;
@@ -410,23 +405,27 @@ String brailleToChar(byte bits, bool commitState = true) {
       return "";
     }
   }
+  if (commitState && pattern != 48) textPressedOnce = false;
 
   // 1. Resolve two-cell UEB symbols ([], {}, <>, etc.)
   if (pendingSymbolPrefix != 0) {
     String sym = lookupUebSymbolPair(pendingSymbolPrefix, pattern);
     byte usedPrefix = pendingSymbolPrefix;
-    if (commitState) {
-      pendingSymbolPrefix = 0;
-      nextSpecial = false;
-      specialPressedOnce = false;
-      clearTempIndicator();
-    }
     if (sym.length() > 0) {
+      if (commitState) {
+        pendingSymbolPrefix = 0;
+        nextSpecial = false;
+        specialPressedOnce = false;
+        clearTempIndicator();
+      }
       return sym;
     }
-    // Preserve '-' prefix for final-letter groupsigns (e.g., r + Dots 4-6 + d -> "r-d")
-    if (usedPrefix == 40 && commitState) {
-      prefixStr = "-";
+    // Not a 2-cell symbol pair: clear prefix, keep nextSpecial active for single-cell punctuation
+    if (commitState) {
+      pendingSymbolPrefix = 0;
+      if (usedPrefix == 40) {
+        prefixStr = "-";
+      }
     }
   }
 
@@ -437,46 +436,68 @@ String brailleToChar(byte bits, bool commitState = true) {
     return "";
   }
 
-  if (commitState && pattern != 48) textPressedOnce = false;
-
-  Mode evalMode = currentMode;
-  if (evalMode == AUTO && pattern != 0) {
-    if (brailleToText(pattern) != "~") evalMode = TEXT;
-    else if (specialFromBraille(pattern) != "0") evalMode = SPECIAL;
-    else if (brailleToNumber(pattern) != '?') evalMode = NUMBER;
+  // 2. Determine active decoding mode (AUTO stays persistent across characters)
+  Mode activeMode = currentMode;
+  if (nextNumber || numberLock) {
+    activeMode = NUMBER;
+  } else if (nextSpecial || specialLock) {
+    activeMode = SPECIAL;
+  } else if (nextText || textLock) {
+    activeMode = TEXT;
+  } else if (activeMode == AUTO) {
+    activeMode = TEXT; // Default in AUTO mode is normal text without needing a trigger
   }
 
+  // 3. Consume single-shot triggers on commit without overwriting AUTO mode
   if (commitState) {
-    if (nextNumber || numberLock) { currentMode = NUMBER; nextNumber = false; clearTempIndicator(); }
-    if (nextSpecial || specialLock) { currentMode = SPECIAL; nextSpecial = false; clearTempIndicator(); }
-    if (nextText || textLock) { currentMode = TEXT; nextText = false; clearTempIndicator(); }
-  }
+    if (nextNumber) {
+      if (currentMode != AUTO) currentMode = NUMBER;
+      nextNumber = false;
+      clearTempIndicator();
+    } else if (numberLock && currentMode != AUTO) {
+      currentMode = NUMBER;
+    }
 
-  Mode activeMode = (currentMode == AUTO) ? evalMode : currentMode;
+    if (nextSpecial) {
+      if (currentMode != AUTO) currentMode = SPECIAL;
+      nextSpecial = false;
+      clearTempIndicator();
+    } else if (specialLock && currentMode != AUTO) {
+      currentMode = SPECIAL;
+    }
+
+    if (nextText) {
+      if (currentMode != AUTO) currentMode = TEXT;
+      nextText = false;
+      clearTempIndicator();
+    } else if (textLock && currentMode != AUTO) {
+      currentMode = TEXT;
+    }
+  }
 
   if (activeMode == TEXT) {
-      out = brailleToText(pattern);
-      if (out == "~") {
-          String s = specialFromBraille(pattern);
-          if (s != "0") out = String(s);
-          else {
-              char n = brailleToNumber(pattern);
-              if (n != '?') out = String(n);
-              else out = "?";
-          }
+    out = brailleToText(pattern);
+    if (out == "~") {
+      String s = specialFromBraille(pattern);
+      if (s != "0") out = String(s);
+      else {
+        char n = brailleToNumber(pattern);
+        if (n != '?') out = String(n);
+        else out = "?";
       }
+    }
   } else if (activeMode == SPECIAL) {
+    String s = specialFromBraille(pattern);
+    if (s != "0") out = String(s);
+    else out = brailleToText(pattern);
+  } else if (activeMode == NUMBER) {
+    char n = brailleToNumber(pattern);
+    if (n != '?') out = String(n);
+    else {
       String s = specialFromBraille(pattern);
       if (s != "0") out = String(s);
       else out = brailleToText(pattern);
-  } else if (activeMode == NUMBER) {
-      char n = brailleToNumber(pattern);
-      if (n != '?') out = String(n);
-      else {
-          String s = specialFromBraille(pattern);
-          if (s != "0") out = String(s);
-          else out = brailleToText(pattern);
-      }
+    }
   }
 
   if ((nextCapital || capsLock) && out.length() > 0) {
@@ -806,6 +827,13 @@ void cycleMode() {
   else if (currentMode == SPECIAL) currentMode = NUMBER;
   else if (currentMode == NUMBER) currentMode = AUTO;
   else currentMode = AUTO;
+
+  nextCapital = false; capsLock = false; dot6PressedOnce = false;
+  nextNumber = false; numberLock = false; numPressedOnce = false;
+  nextSpecial = false; specialLock = false; specialPressedOnce = false;
+  nextText = false; textLock = false; textPressedOnce = false;
+  pendingSymbolPrefix = 0;
+  clearTempIndicator();
   updateLCDMode();
 }
 
@@ -2249,14 +2277,8 @@ void setup() {
   server.on("/connecttest.txt", handleCaptivePortal);
   server.on("/redirect", handleCaptivePortal);
   server.on("/canonical.html", handleCaptivePortal);
-  server.on("/braillify icon.png", HTTP_GET, []() {
-    if (LittleFS.exists("/braillify icon.png")) {
-      File file = LittleFS.open("/braillify icon.png", "r");
-      server.streamFile(file, "image/png");
-      file.close();
-    } else {
-      server.send(404, "text/plain", "Icon not found");
-    }
+  server.on("/braillify-icon.png", HTTP_GET, []() {
+    server.send_P(200, "image/png", (const char*)BRAILLIFY_ICON, BRAILLIFY_ICON_LEN);
   });
   
   server.on("/api/ota_update", HTTP_GET, []() {
@@ -2268,13 +2290,97 @@ void setup() {
   });
 
   server.on("/update", HTTP_GET, []() {
-    String html = "<html><body>";
-    html += "<form method='POST' action='/update' enctype='multipart/form-data'>";
-    html += "<h2>Braillify OTA Firmware Update</h2>";
-    html += "<input type='file' name='update' accept='.bin'>";
-    html += "<input type='submit' value='Upload & Flash'>";
-    html += "</form></body></html>";
-    server.send(200, "text/html", html);
+    String page = FPSTR(update_html);
+    page.replace("%VERSION%", FIRMWARE_VERSION);
+    server.send(200, "text/html", page);
+  });
+
+  server.on("/ota-url", HTTP_POST, []() {
+    if (!server.hasArg("url") || server.arg("url").length() == 0) {
+      server.send(400, "text/plain", "Missing firmware URL.");
+      return;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+      server.send(503, "text/plain", "ESP32 is not connected to Wi-Fi.");
+      return;
+    }
+
+    String binUrl = server.arg("url");
+    String tag = server.hasArg("tag") ? server.arg("tag") : "OTA";
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("OTA: " + tag.substring(0, 11));
+    lcd.setCursor(0, 1);
+    lcd.print("Downloading...  ");
+
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setTimeout(15000);
+
+    if (!http.begin(client, binUrl)) {
+      server.send(500, "text/plain", "Failed to initialize HTTPS connection.");
+      updateLCDMode();
+      redrawLCDLine();
+      return;
+    }
+
+    int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+      String errMsg = "GitHub download failed (HTTP " + String(httpCode) + ")";
+      http.end();
+      errorTone();
+      server.send(502, "text/plain", errMsg);
+      updateLCDMode();
+      redrawLCDLine();
+      return;
+    }
+
+    int contentLen = http.getSize();
+    if (!Update.begin(contentLen > 0 ? contentLen : UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+      http.end();
+      errorTone();
+      server.send(500, "text/plain", "Not enough flash space for firmware.");
+      updateLCDMode();
+      redrawLCDLine();
+      return;
+    }
+
+    lcd.setCursor(0, 1);
+    lcd.print("Flashing OTA... ");
+
+    WiFiClient* stream = http.getStreamPtr();
+    size_t written = Update.writeStream(*stream);
+    http.end();
+
+    if ((contentLen > 0 && written != (size_t)contentLen) || !Update.end(true) || Update.hasError()) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(" OTA Failed!    ");
+      lcd.setCursor(0, 1);
+      lcd.print(" Write Error    ");
+      errorTone();
+      server.send(500, "text/plain", "Firmware write or verification error.");
+      smartDelay(2000);
+      updateLCDMode();
+      redrawLCDLine();
+      return;
+    }
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(" Update Success!");
+    lcd.setCursor(0, 1);
+    lcd.print(" Rebooting...   ");
+    saveTone();
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", "Update Success! Rebooting...");
+    smartDelay(1200);
+    ESP.restart();
   });
 
   server.on("/update", HTTP_POST, []() {
@@ -2603,14 +2709,21 @@ void handleKeyPress(char key) {
             handleSpaceKeyDirect();
             pushUndoState();
             insertSpaceAtCursor();
-            if (currentMode == AUTO) currentMode = TEXT;
             capsLock = false;
             nextCapital = false;
+            dot6PressedOnce = false;
             nextNumber = false;
             numberLock = false;
+            numPressedOnce = false;
             nextSpecial = false;
             specialLock = false;
+            specialPressedOnce = false;
+            nextText = false;
+            textLock = false;
+            textPressedOnce = false;
+            pendingSymbolPrefix = 0;
             contractionPrefix = 0;
+            clearTempIndicator();
             break;
 
         case '#': {

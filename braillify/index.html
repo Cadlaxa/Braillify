@@ -4,9 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Braillify Web Controller</title>
-  <link rel="icon" type="image/png" sizes="32x32" href="/braillify icon.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="/braillify icon.png">
-  <link rel="apple-touch-icon" href="/braillify icon.png">
+  <link rel="shortcut icon" type="image/png" href="/braillify-icon.png?v=2">
+  <link rel="icon" type="image/png" sizes="32x32" href="/braillify-icon.png?v=2">
+  <link rel="icon" type="image/png" sizes="192x192" href="/braillify-icon.png?v=2">
+  <link rel="apple-touch-icon" href="/braillify-icon.png?v=2">
   <style>
     :root {
       --bg: #f4f5ff;
@@ -218,6 +219,7 @@
     .char-pair:hover { background: var(--blue-light); }
     .char-pair.selected { background: #bbdefb !important; color: #0d47a1 !important; border: 1px solid var(--blue); border-radius: 3px; }
     .char-pair.cursor-here { background: var(--orange); color: #ffffff; font-weight: bold; animation: blink 1s infinite; }
+    .char-pair.tts-speaking { background: #fff59d !important; color: #111827 !important; border-bottom: 2.5px solid var(--orange-dark); border-radius: 4px;}
     @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
     .char-pair .top-char { font-size: 1.1rem; font-weight: 900; font-family: 'Courier New', monospace; line-height: 1; pointer-events: none; }
     .char-pair .sub-braille { font-size: 0.85rem; line-height: 1; margin-top: 2px; opacity: 0.85; font-family: sans-serif; pointer-events: none; }
@@ -628,15 +630,23 @@
 
   <div class="full-text-section">
     <div class="section-header">
-      <div class="section-title">> Transformed Full Text</div>
+      <div class="section-title"></div>
       <div class="action-btn-group">
         <button class="action-btn" id="tts-btn" onclick="speakFullTextOrSelection()" title="Read Text Aloud">
           <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89 0.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-0.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
           <span id="tts-btn-text">Speak</span>
         </button>
+        <button class="action-btn" id="tts-pause-btn" onclick="toggleTtsPauseResume()" title="Pause or Resume Speech" style="display:none; background:#e3f2fd; color:#0288d1;">
+          <svg id="tts-pause-icon" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          <span id="tts-pause-text">Pause</span>
+        </button>
+        <button class="action-btn" id="tts-stop-btn" onclick="stopTtsSpeech()" title="Stop Speech" style="display:none; background:#ffebee; color:#c62828;">
+          <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+          <span>Stop</span>
+        </button>
         <button class="action-btn" id="copy-btn" onclick="copyFullText()" title="Copy to Clipboard">
           <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 0.9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 0.9-2 2v14c0 1.1 0.9 2 2 2h11c1.1 0 2-0.9 2-2V7c0-1.1-0.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-          <span id="copy-btn-text">Copy Text</span>
+          <span id="copy-btn-text">Copy</span>
         </button>
       </div>
     </div>
@@ -1213,13 +1223,21 @@
         </div>
       </div>
 
-      <div class="ota-section">
-        <div class="setting-header" style="margin-bottom:8px;"><span>⚡ Manual Firmware Update</span></div>
-        <p style="font-size: 0.8rem; color: #57606a; margin-bottom: 14px; font-weight: 600;">Check GitHub releases for the latest firmware binary over Wi-Fi.</p>
+      <div class="ota-section" style="margin-bottom: 14px;">
+        <div class="setting-header" style="margin-bottom:8px;"><span>☁️ Online Firmware Update</span></div>
+        <p style="font-size: 0.8rem; color: #57606a; margin-bottom: 12px; font-weight: 600;">Check GitHub releases for the latest firmware binary over Wi-Fi.</p>
         <button id="ota-btn" onclick="triggerOtaUpdate()" class="btn-update">
-          ⚡ Check & Update Firmware (GitHub OTA)
+          ⚡ Check &amp; Update Firmware (GitHub OTA)
         </button>
         <div id="ota-status"></div>
+      </div>
+
+      <div class="ota-section" style="border-top: 2px dashed var(--border); padding-top: 14px;">
+        <div class="setting-header" style="margin-bottom:8px;"><span>📦 Manual Firmware Update</span></div>
+        <p style="font-size: 0.8rem; color: #57606a; margin-bottom: 12px; font-weight: 600;">Flash a compiled <code>.bin</code> firmware file directly from your device without internet.</p>
+        <a href="/update" class="btn-update" style="background: var(--blue-light); color: var(--blue); text-decoration: none;">
+          📂 Upload Firmware File (.bin)
+        </a>
       </div>
     </div>
 
@@ -1685,16 +1703,29 @@ function downloadNoteFile(ext) {
 
 function repeatLastSpeech() {
   const toSpeak = lastUtteranceText || currentFullText;
-  if (toSpeak) speakTextUtterance(toSpeak, true);
+  if (!toSpeak) return;
+  const baseIdx = (toSpeak === currentFullText) ? 0 : -1;
+  speakTextUtterance(toSpeak, true, false, baseIdx);
 }
 
 /* ---------- FLASHCARD DATASET ---------- */
 const fcDataset = [
-  {ch:'a', bits:1},  {ch:'b', bits:3},  {ch:'c', bits:9},  {ch:'d', bits:25}, {ch:'e', bits:17},
-  {ch:'f', bits:11}, {ch:'g', bits:27}, {ch:'h', bits:19}, {ch:'i', bits:10}, {ch:'j', bits:26},
-  {ch:'k', bits:5},  {ch:'l', bits:7},  {ch:'m', bits:13}, {ch:'n', bits:29}, {ch:'o', bits:21},
-  {ch:'p', bits:15}, {ch:'q', bits:31}, {ch:'r', bits:23}, {ch:'s', bits:14}, {ch:'t', bits:30},
-  {ch:'u', bits:37}, {ch:'v', bits:39}, {ch:'w', bits:58}, {ch:'x', bits:45}, {ch:'y', bits:61}, {ch:'z', bits:53},
+  // Lowercase Letters (Text Indicator: Dots 5-6)
+  {ch:'a', bits:1,  prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'b', bits:3,  prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'c', bits:9,  prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'d', bits:25, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'e', bits:17, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'f', bits:11, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'g', bits:27, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'h', bits:19, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'i', bits:10, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'j', bits:26, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'k', bits:5,  prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'l', bits:7,  prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'m', bits:13, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'n', bits:29, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'o', bits:21, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'p', bits:15, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'q', bits:31, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'r', bits:23, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'s', bits:14, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'t', bits:30, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'u', bits:37, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'v', bits:39, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'w', bits:58, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'x', bits:45, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+  {ch:'y', bits:61, prefixBits:48, prefixName:'Text Ind > (⠰)'}, {ch:'z', bits:53, prefixBits:48, prefixName:'Text Ind > (⠰)'},
+
+  // Uppercase Letters (Capital Indicator: Dot 6)
   {ch:'A', bits:1,  prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'B', bits:3,  prefixBits:32, prefixName:'Dot 6 (⠠)'},
   {ch:'C', bits:9,  prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'D', bits:25, prefixBits:32, prefixName:'Dot 6 (⠠)'},
   {ch:'E', bits:17, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'F', bits:11, prefixBits:32, prefixName:'Dot 6 (⠠)'},
@@ -1708,11 +1739,15 @@ const fcDataset = [
   {ch:'U', bits:37, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'V', bits:39, prefixBits:32, prefixName:'Dot 6 (⠠)'},
   {ch:'W', bits:58, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'X', bits:45, prefixBits:32, prefixName:'Dot 6 (⠠)'},
   {ch:'Y', bits:61, prefixBits:32, prefixName:'Dot 6 (⠠)'}, {ch:'Z', bits:53, prefixBits:32, prefixName:'Dot 6 (⠠)'},
+
+  // Numbers (Number Indicator: Dots 3-4-5-6)
   {ch:'1', bits:1,  prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'2', bits:3,  prefixBits:60, prefixName:'Num Ind # (⠼)'},
   {ch:'3', bits:9,  prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'4', bits:25, prefixBits:60, prefixName:'Num Ind # (⠼)'},
   {ch:'5', bits:17, prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'6', bits:11, prefixBits:60, prefixName:'Num Ind # (⠼)'},
   {ch:'7', bits:27, prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'8', bits:19, prefixBits:60, prefixName:'Num Ind # (⠼)'},
   {ch:'9', bits:10, prefixBits:60, prefixName:'Num Ind # (⠼)'}, {ch:'0', bits:26, prefixBits:60, prefixName:'Num Ind # (⠼)'},
+
+  // Special Characters (Special Indicator: Dots 4-5-6)
   {ch:'?', bits:38, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:'!', bits:22, prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
   {ch:'&', bits:47, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:',', bits:2,  prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
   {ch:'.', bits:50, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}, {ch:';', bits:6,  prefixBits:56, prefixName:'Spec Ind $ (⠸)'},
@@ -1721,10 +1756,12 @@ const fcDataset = [
   {ch:'\'', bits:4, prefixBits:56, prefixName:'Spec Ind $ (⠸)'}
 ];
 
-let fcTargetIndex = 0;
+let fcTargetIndex = -1;
 let fcScore = 0;
 let fcStreak = 0;
 let fcShowHint = false;
+let fcPrevHadPrefix = false;
+let fcPrevBits = 0;
 let lastEvaluatedTextLen = 0;
 let currentBrightness = 100;
 let currentVolume = 100;
@@ -1893,7 +1930,6 @@ function submitPinAuth() {
       updateBodyScrollLock();
       
       speakTextUtterance('Connected to Braillify', true);
-      alert('✅ ' + (data.msg || 'Connected to Braillify!'));
     })
     .catch(() => {
       errMsg.innerText = '❌ Incorrect PIN. Try again.';
@@ -1983,13 +2019,17 @@ function finishWizardSetup() {
     .catch(() => closeWizardModal());
 }
 
-function openFlashcardModal(){ 
-  document.getElementById('flashcard-modal').classList.add('active'); 
+function openFlashcardModal() {
+  document.getElementById('flashcard-modal').classList.add('active');
   updateBodyScrollLock();
   lastEvaluatedTextLen = currentFullText.length;
+  fcPrevHadPrefix = false;
+  fcPrevBits = currentBits;
+  nextFlashcardTarget();
 }
-function closeFlashcardModal(){ 
-  document.getElementById('flashcard-modal').classList.remove('active'); 
+
+function closeFlashcardModal() {
+  document.getElementById('flashcard-modal').classList.remove('active');
   updateBodyScrollLock();
 }
 
@@ -1998,21 +2038,20 @@ function toggleFlashcardHint() {
   document.getElementById('fc-hint').style.display = fcShowHint ? 'block' : 'none';
 }
 
-function nextFlashcardTarget(){
+function nextFlashcardTarget() {
   let nextIdx;
-  do { nextIdx = Math.floor(Math.random() * fcDataset.length); } while (nextIdx === fcTargetIndex);
+  do {
+    nextIdx = Math.floor(Math.random() * fcDataset.length);
+  } while (nextIdx === fcTargetIndex);
+
   fcTargetIndex = nextIdx;
   const targetObj = fcDataset[fcTargetIndex];
-  
+
   document.getElementById('fc-target').innerText = targetObj.ch;
-  
+
   const triggerEl = document.getElementById('fc-trigger-info');
-  if (targetObj.prefixName) {
-    triggerEl.style.display = 'inline-block';
-    triggerEl.innerText = `AUTO Mode Trigger: ${targetObj.prefixName}`;
-  } else {
-    triggerEl.style.display = 'none';
-  }
+  triggerEl.style.display = 'inline-block';
+  triggerEl.innerText = `AUTO Mode Trigger: ${targetObj.prefixName}`;
 
   let hintBraille = "";
   if (targetObj.prefixBits) {
@@ -2024,7 +2063,7 @@ function nextFlashcardTarget(){
   const statusEl = document.getElementById('fc-status');
   if (statusEl) {
     statusEl.className = 'fc-status-msg';
-    statusEl.innerText = 'Set dots on keypad & press ENTER (#)';
+    statusEl.innerText = `Enter ${targetObj.prefixName}, then '${targetObj.ch}' & press ENTER (#)`;
   }
 }
 
@@ -2032,14 +2071,35 @@ function checkFlashcardAnswer(d) {
   const modal = document.getElementById('flashcard-modal');
   if (!modal || !modal.classList.contains('active')) {
     lastEvaluatedTextLen = d.fullText ? d.fullText.length : 0;
+    fcPrevBits = d.bits || 0;
     return;
   }
 
+  const targetObj = fcDataset[fcTargetIndex];
+  const statusEl = document.getElementById('fc-status');
   const currentLen = d.fullText ? d.fullText.length : 0;
+
+  // Warn if device was manually switched out of AUTO mode (mode 0)
+  if (d.mode !== undefined && d.mode !== 0 && statusEl && !statusEl.classList.contains('correct')) {
+    statusEl.className = 'fc-status-msg wrong';
+    statusEl.innerText = '⚠️ Switch device to AUTO mode (*) for prefix triggers';
+  }
+
+  // Detect when a prefix trigger (Dot 6 = 32, # = 60, $ = 56) was just committed
+  if (
+    currentLen === lastEvaluatedTextLen &&
+    fcPrevBits !== 0 &&
+    d.bits === 0 &&
+    targetObj &&
+    targetObj.prefixBits === fcPrevBits &&
+    statusEl
+  ) {
+    statusEl.className = 'fc-status-msg';
+    statusEl.innerText = `✅ Trigger set! Now enter '${targetObj.ch}' dots & press ENTER (#)`;
+  }
+
   if (currentLen > lastEvaluatedTextLen) {
     const typedChar = d.fullText[d.cursor - 1] ? d.fullText[d.cursor - 1] : '';
-    const targetObj = fcDataset[fcTargetIndex];
-    const statusEl = document.getElementById('fc-status');
 
     if (typedChar === targetObj.ch) {
       fcScore += 10;
@@ -2060,7 +2120,9 @@ function checkFlashcardAnswer(d) {
       speakTextUtterance('Try again', true);
     }
   }
+
   lastEvaluatedTextLen = currentLen;
+  fcPrevBits = d.bits || 0;
 }
 
 function loadSavedWifis() {
@@ -2534,6 +2596,7 @@ function renderFullText(text, pos, brailleArr, selStart, selEnd){
 
   container.scrollTop = prevScrollTop;
   positionSelectionHandles(selStart, selEnd);
+  applyTtsHighlightToDom();
 }
 
 function startSelection(idx) {
@@ -2770,17 +2833,222 @@ function fallbackCopyText(text, successCallback) {
 
 let currentUtterance = null;
 let ttsUnlocked = false;
+let ttsIsPaused = false;
+let ttsWatchdogTimer = null;
+
+let ttsFullQueueText = "";
+let ttsCharOffset = 0;
+let ttsSpeakStartTime = 0;
+let ttsIsManualPauseCancel = false;
+let ttsBoundarySupported = false;
+
+let ttsBufferBaseIdx = -1;
+let ttsHighlightStart = -1;
+let ttsHighlightEnd = -1;
+
+let ttsChunks = [];
+let ttsCurrentChunkIdx = 0;
+let ttsActiveWordTimeline = [];
+
+const IS_ANDROID = /Android/i.test(navigator.userAgent || '');
+// Self-calibrating speed multiplier for Android TTS (1.0 = ~200 WPM baseline)
+let androidTempoScale = 1.0;
+let ttsCurrentChunkPredictedMs = 0;
+
+const PAUSE_SVG_PATH = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+const PLAY_SVG_PATH  = '<path d="M8 5v14l11-7z"/>';
+
+function applyTtsHighlightToDom() {
+  const pairs = document.querySelectorAll('#full-text-box .char-pair');
+  const active = ttsHighlightStart >= 0 && ttsHighlightEnd > ttsHighlightStart;
+
+  pairs.forEach((pair) => {
+    const i = parseInt(pair.getAttribute('data-idx'), 10);
+    if (active && i >= ttsHighlightStart && i < ttsHighlightEnd) {
+      pair.classList.add('tts-speaking');
+    } else {
+      pair.classList.remove('tts-speaking');
+    }
+  });
+}
+
+function clearTtsHighlight() {
+  ttsHighlightStart = -1;
+  ttsHighlightEnd = -1;
+  ttsBufferBaseIdx = -1;
+  ttsActiveWordTimeline = [];
+  applyTtsHighlightToDom();
+}
+
+function highlightSpokenWordAt(charIndexInQueue) {
+  if (ttsBufferBaseIdx < 0 || !ttsFullQueueText) return;
+
+  let idx = Math.max(0, Math.min(charIndexInQueue, ttsFullQueueText.length - 1));
+  while (idx < ttsFullQueueText.length && /\s/.test(ttsFullQueueText[idx])) {
+    idx++;
+  }
+  if (idx >= ttsFullQueueText.length) return;
+
+  let wStart = idx;
+  while (wStart > 0 && !/\s/.test(ttsFullQueueText[wStart - 1])) {
+    wStart--;
+  }
+  let wEnd = idx;
+  while (wEnd < ttsFullQueueText.length && !/\s/.test(ttsFullQueueText[wEnd])) {
+    wEnd++;
+  }
+
+  const nextStart = ttsBufferBaseIdx + wStart;
+  const nextEnd = ttsBufferBaseIdx + wEnd;
+  if (nextStart === ttsHighlightStart && nextEnd === ttsHighlightEnd) return;
+
+  ttsHighlightStart = nextStart;
+  ttsHighlightEnd = nextEnd;
+  applyTtsHighlightToDom();
+
+  const box = document.getElementById('full-text-box');
+  const activeEl = box ? box.querySelector(`.char-pair[data-idx="${ttsHighlightStart}"]`) : null;
+  if (box && activeEl) {
+    const boxRect = box.getBoundingClientRect();
+    const elRect = activeEl.getBoundingClientRect();
+    if (elRect.top < boxRect.top || elRect.bottom > boxRect.bottom) {
+      activeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+}
+
+// Split text into natural sentence/clause chunks so Android re-syncs timing at every pause
+function buildTtsChunks(text, startFromOffset = 0) {
+  const chunks = [];
+  const sub = text.slice(startFromOffset);
+  const regex = /[^.!?\n]+[.!?\n]*\s*/g;
+  let match;
+  while ((match = regex.exec(sub)) !== null) {
+    if (match[0].trim().length > 0) {
+      chunks.push({
+        text: match[0],
+        offset: startFromOffset + match.index
+      });
+    }
+  }
+  if (chunks.length === 0 && sub.trim().length > 0) {
+    chunks.push({ text: sub, offset: startFromOffset });
+  }
+  return chunks;
+}
+
+function setTtsPlaybackControls(visible, paused = false) {
+  const pauseBtn = document.getElementById('tts-pause-btn');
+  const stopBtn = document.getElementById('tts-stop-btn');
+  const pauseIcon = document.getElementById('tts-pause-icon');
+  const pauseText = document.getElementById('tts-pause-text');
+
+  ttsIsPaused = paused;
+
+  if (pauseBtn) pauseBtn.style.display = visible ? 'flex' : 'none';
+  if (stopBtn) stopBtn.style.display = visible ? 'flex' : 'none';
+
+  if (visible && pauseIcon && pauseText) {
+    pauseIcon.innerHTML = paused ? PLAY_SVG_PATH : PAUSE_SVG_PATH;
+    pauseText.innerText = paused ? 'Play' : 'Pause';
+    if (pauseBtn) {
+      pauseBtn.style.background = paused ? '#e8f5e9' : '#e3f2fd';
+      pauseBtn.style.color = paused ? '#2e7d32' : '#0288d1';
+    }
+  }
+
+  clearInterval(ttsWatchdogTimer);
+  if (visible && !paused) {
+    ttsWatchdogTimer = setInterval(() => {
+      if (ttsIsPaused || ttsIsManualPauseCancel) return;
+      if (!('speechSynthesis' in window) || (!window.speechSynthesis.speaking && !window.speechSynthesis.pending)) {
+        currentUtterance = null;
+        ttsFullQueueText = "";
+        ttsCharOffset = 0;
+        clearTtsHighlight();
+        setTtsPlaybackControls(false, false);
+        return;
+      }
+
+      // Weighted timeline sync when onboundary isn't emitted (Android)
+      if (!ttsBoundarySupported && ttsActiveWordTimeline.length > 0 && ttsSpeakStartTime > 0) {
+        const elapsedMs = Date.now() - ttsSpeakStartTime;
+        let activeEntry = ttsActiveWordTimeline[0];
+        for (let i = 0; i < ttsActiveWordTimeline.length; i++) {
+          if (elapsedMs >= ttsActiveWordTimeline[i].startMs) {
+            activeEntry = ttsActiveWordTimeline[i];
+          } else {
+            break;
+          }
+        }
+        if (activeEntry) {
+          ttsCharOffset = activeEntry.globalStart;
+          highlightSpokenWordAt(ttsCharOffset);
+        }
+      }
+    }, 60);
+  }
+}
+
+function toggleTtsPauseResume() {
+  if (!('speechSynthesis' in window)) return;
+  try {
+    if (ttsIsPaused) {
+      if (!IS_ANDROID && window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+        setTtsPlaybackControls(true, false);
+      } else {
+        // Resume cleanly from the exact current word offset
+        ttsChunks = buildTtsChunks(ttsFullQueueText, ttsCharOffset);
+        ttsCurrentChunkIdx = 0;
+        if (ttsChunks.length > 0) {
+          speakNextChunk();
+        } else {
+          stopTtsSpeech();
+        }
+      }
+    } else if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+      if (!IS_ANDROID) {
+        window.speechSynthesis.pause();
+        setTtsPlaybackControls(true, true);
+      } else {
+        ttsIsManualPauseCancel = true;
+        currentUtterance = null;
+        window.speechSynthesis.cancel();
+        setTtsPlaybackControls(true, true);
+        setTimeout(() => { ttsIsManualPauseCancel = false; }, 150);
+      }
+    }
+  } catch (e) {}
+}
+
+function stopTtsSpeech() {
+  if (!('speechSynthesis' in window)) return;
+  try {
+    ttsIsManualPauseCancel = true;
+    currentUtterance = null;
+    ttsFullQueueText = "";
+    ttsCharOffset = 0;
+    ttsChunks = [];
+    ttsCurrentChunkIdx = 0;
+    window.speechSynthesis.cancel();
+    setTimeout(() => { ttsIsManualPauseCancel = false; }, 150);
+  } catch (e) {}
+  clearTtsHighlight();
+  setTtsPlaybackControls(false, false);
+}
 
 function unlockTts() {
   if (!('speechSynthesis' in window)) return;
   try {
-    if (window.speechSynthesis.paused) {
+    if (window.speechSynthesis.paused && !ttsIsPaused) {
       window.speechSynthesis.resume();
     }
     window.speechSynthesis.getVoices();
     if (!ttsUnlocked) {
       const dummy = new SpeechSynthesisUtterance(' ');
       dummy.volume = 0.01;
+      dummy._isDummy = true;
       window.speechSynthesis.speak(dummy);
       ttsUnlocked = true;
     }
@@ -2796,30 +3064,137 @@ if ('speechSynthesis' in window) {
   };
 }
 
-function speakTextUtterance(str, force = false) {
+function buildWordTimeline(chunkText, chunkGlobalOffset, rateVal) {
+  const timeline = [];
+  const wordRegex = /\S+/g;
+  let m;
+  let cursorMs = 0;
+
+  // Calibrated to Android Google TTS (~200 WPM at 1.0x) and scaled dynamically
+  const scale = IS_ANDROID ? androidTempoScale : 1.0;
+  const msPerChar = (46 / rateVal) * scale;
+  const baseWordMs = (55 / rateVal) * scale;
+
+  while ((m = wordRegex.exec(chunkText)) !== null) {
+    const word = m[0];
+    const cleanLen = word.replace(/[^a-zA-Z0-9]/g, '').length || word.length;
+    let punctPauseMs = 0;
+    if (/[,;:]$/.test(word)) punctPauseMs = (85 / rateVal) * scale;
+    else if (/[.!?]$/.test(word)) punctPauseMs = (140 / rateVal) * scale;
+
+    const durationMs = baseWordMs + (cleanLen * msPerChar) + punctPauseMs;
+    timeline.push({
+      startMs: cursorMs,
+      endMs: cursorMs + durationMs,
+      globalStart: chunkGlobalOffset + m.index
+    });
+    cursorMs += durationMs;
+  }
+  ttsCurrentChunkPredictedMs = cursorMs;
+  return timeline;
+}
+
+function speakNextChunk() {
+  if (ttsCurrentChunkIdx >= ttsChunks.length) {
+    currentUtterance = null;
+    ttsFullQueueText = "";
+    ttsCharOffset = 0;
+    clearTtsHighlight();
+    setTtsPlaybackControls(false, false);
+    return;
+  }
+
+  const chunk = ttsChunks[ttsCurrentChunkIdx];
+  const rateVal = parseFloat(document.getElementById('speech-rate-slider').value) || 1.0;
+
+  ttsIsManualPauseCancel = true;
+  window.speechSynthesis.cancel();
+  if (window.speechSynthesis.paused) {
+    window.speechSynthesis.resume();
+  }
+  ttsIsManualPauseCancel = false;
+
+  const utter = new SpeechSynthesisUtterance(chunk.text);
+  utter.rate = rateVal;
+  currentUtterance = utter;
+  ttsSpeakStartTime = 0;
+  ttsActiveWordTimeline = buildWordTimeline(chunk.text, chunk.offset, rateVal);
+
+  const voices = window.speechSynthesis.getVoices();
+  if (voices && voices.length > 0) {
+    const prefVoice = voices.find(v => v.lang && v.lang.startsWith('en')) || voices[0];
+    if (prefVoice) utter.voice = prefVoice;
+  }
+
+  utter.onboundary = (e) => {
+    if (currentUtterance === utter && typeof e.charIndex === 'number') {
+      ttsBoundarySupported = true;
+      ttsCharOffset = chunk.offset + e.charIndex;
+      highlightSpokenWordAt(ttsCharOffset);
+    }
+  };
+  utter.onstart = () => {
+    if (currentUtterance === utter) {
+      ttsSpeakStartTime = Date.now();
+      ttsCharOffset = chunk.offset;
+      highlightSpokenWordAt(chunk.offset);
+      setTtsPlaybackControls(true, false);
+    }
+  };
+  utter.onpause = () => {
+    if (currentUtterance === utter && !IS_ANDROID) setTtsPlaybackControls(true, true);
+  };
+  utter.onresume = () => {
+    if (currentUtterance === utter) setTtsPlaybackControls(true, false);
+  };
+  utter.onend = () => {
+    if (ttsIsManualPauseCancel) return;
+    if (currentUtterance === utter) {
+      // Auto-calibrate tempo from the actual measured duration of this chunk
+      if (IS_ANDROID && !ttsBoundarySupported && ttsSpeakStartTime > 0 && ttsCurrentChunkPredictedMs > 250) {
+        const actualMs = Date.now() - ttsSpeakStartTime;
+        const measuredRatio = actualMs / ttsCurrentChunkPredictedMs;
+        if (measuredRatio > 0.4 && measuredRatio < 2.2) {
+          androidTempoScale = Math.max(0.5, Math.min(1.8, androidTempoScale * (0.4 + 0.6 * measuredRatio)));
+        }
+      }
+      ttsCurrentChunkIdx++;
+      speakNextChunk();
+    }
+  };
+  utter.onerror = () => {
+    if (ttsIsManualPauseCancel) return;
+    if (currentUtterance === utter) {
+      currentUtterance = null;
+      clearTtsHighlight();
+      setTtsPlaybackControls(false, false);
+    }
+  };
+
+  setTtsPlaybackControls(true, false);
+  window.speechSynthesis.speak(utter);
+}
+
+function speakTextUtterance(str, force = false, isResumeChunk = false, bufferStartIdx = -1) {
   if (!str || str.trim() === '') return;
-  lastUtteranceText = str;
+  if (!isResumeChunk) {
+    lastUtteranceText = str;
+    ttsFullQueueText = str;
+    ttsCharOffset = 0;
+    ttsBufferBaseIdx = bufferStartIdx;
+    ttsBoundarySupported = false;
+  }
   if (!force && currentTtsMode === 0) return;
 
   if ('speechSynthesis' in window) {
     try {
-      window.speechSynthesis.cancel();
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
-
-      const rateVal = parseFloat(document.getElementById('speech-rate-slider').value) || 1.0;
-      currentUtterance = new SpeechSynthesisUtterance(str);
-      currentUtterance.rate = rateVal;
-
-      const voices = window.speechSynthesis.getVoices();
-      if (voices && voices.length > 0) {
-        const prefVoice = voices.find(v => v.lang && v.lang.startsWith('en')) || voices[0];
-        if (prefVoice) currentUtterance.voice = prefVoice;
-      }
-
-      window.speechSynthesis.speak(currentUtterance);
-    } catch (err) {}
+      ttsChunks = IS_ANDROID ? buildTtsChunks(str, 0) : [{ text: str, offset: 0 }];
+      ttsCurrentChunkIdx = 0;
+      speakNextChunk();
+    } catch (err) {
+      clearTtsHighlight();
+      setTtsPlaybackControls(false, false);
+    }
   } else if (force) {
     alert('Web Speech TTS is not supported in this captive browser popup. Please open in Chrome or Safari at http://192.168.4.1');
   }
@@ -2840,12 +3215,13 @@ function handleLiveTtsFeedback(d) {
         const leftText = newText.substring(0, newPos - 1);
         const match = leftText.match(/([a-zA-Z0-9]+)$/);
         if (match) {
-          speakTextUtterance(match[1]);
+          const wordStartIdx = leftText.length - match[1].length;
+          speakTextUtterance(match[1], false, false, wordStartIdx);
         } else if (currentTtsMode === 1) {
-          speakTextUtterance("space");
+          speakTextUtterance("space", false, false, -1);
         }
       } else if (currentTtsMode === 3) {
-        speakTextUtterance(newText.trim());
+        speakTextUtterance(newText.trim(), false, false, 0);
       }
     } else {
       const diffLen = newText.length - oldText.length;
@@ -2869,10 +3245,10 @@ function handleLiveTtsFeedback(d) {
           }
 
           if (chunkToSpeak.trim().length > 0) {
-            speakTextUtterance(chunkToSpeak);
+            speakTextUtterance(chunkToSpeak, false, false, insertedStart);
           }
         } else if (currentTtsMode === 3) {
-          speakTextUtterance(newText.trim());
+          speakTextUtterance(newText.trim(), false, false, 0);
         }
       }
     }
@@ -2887,7 +3263,7 @@ function speakSelection() {
   const end = Math.max(currentSelStart, currentSelEnd);
   if (start < end && currentFullText) {
     const selText = currentFullText.substring(start, end);
-    speakTextUtterance(selText, true);
+    speakTextUtterance(selText, true, false, start);
   }
 }
 
@@ -2895,7 +3271,7 @@ function speakFullTextOrSelection() {
   if (currentSelStart < currentSelEnd) {
     speakSelection();
   } else {
-    speakTextUtterance(currentFullText, true);
+    speakTextUtterance(currentFullText, true, false, 0);
   }
 }
 
