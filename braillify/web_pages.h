@@ -150,6 +150,28 @@ const char index_html[] PROGMEM = R"rawliteral(
     .wifi-input { width: 100%; padding: 8px 10px; border: 2px solid var(--border); border-radius: 6px; font-size: 16px; font-weight: 600; }
     .wifi-status-info { font-size: 0.75rem; font-weight: bold; color: var(--orange-dark); margin-bottom: 10px; text-align: center; }
 
+    .password-wrap { position: relative; display: flex; align-items: center; width: 100%; }
+    .password-wrap .wifi-input { padding-right: 40px; }
+    .eye-toggle-btn { position: absolute; right: 8px; background: none; border: none; color: #57606a; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 4px; border-radius: 4px; line-height: 1; }
+    .eye-toggle-btn:hover,
+    .eye-toggle-btn:focus { color: var(--text); background: var(--bg); }
+    .eye-toggle-btn svg { width: 18px; height: 18px; fill: currentColor; pointer-events: none; }
+    .pin-eye-btn {
+      width: 42px;
+      height: 50px;
+      background: var(--bg);
+      border: 2px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 2px 2px 0px var(--border);
+      transition: all 0.05s; }
+    .pin-eye-btn:active { transform: translate(1px, 1px); box-shadow: none; }
+    .pin-eye-btn svg { width: 20px; height: 20px; fill: currentColor; pointer-events: none; }
+
     .setting-group { margin-bottom: 16px; }
     .setting-header { display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 800; margin-bottom: 6px; color: var(--text); }
     .setting-slider { width: 100%; accent-color: var(--orange-dark); cursor: pointer; height: 8px; }
@@ -220,9 +242,9 @@ const char index_html[] PROGMEM = R"rawliteral(
     .viewer-resizer-pill { width: 38px; height: 4px; border-radius: 999px; background: var(--border); opacity: 0.55; }
     .char-pair { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; padding: 2px 4px; border-radius: 4px; user-select: none; min-width: 18px; transition: background 0.1s; position: relative; }
     .char-pair:hover { background: var(--blue-light); }
-    .char-pair.selected { background: #bbdefb !important; color: #0d47a1 !important; border: 1px solid var(--blue); border-radius: 3px; }
+    .char-pair.selected { background: #bbdefb !important; color: #0d47a1 !important; box-shadow: inset 0 0 0 1px var(--blue); border-radius: 3px; }
     .char-pair.cursor-here { background: var(--orange); color: #ffffff; font-weight: bold; animation: blink 1s infinite; }
-    .char-pair.tts-speaking { background: #fff59d !important; color: #111827 !important; border-bottom: 2.5px solid var(--orange-dark); border-radius: 4px;}
+    .char-pair.tts-speaking { background: #fff59d !important; color: #111827 !important; box-shadow: inset 0 -2.5px 0 var(--orange-dark); border-radius: 4px; }
     @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
     .char-pair .top-char { font-size: 1.1rem; font-weight: 900; font-family: 'Courier New', monospace; line-height: 1; pointer-events: none; }
     .char-pair .sub-braille { font-size: 0.85rem; line-height: 1; margin-top: 2px; opacity: 0.85; font-family: sans-serif; pointer-events: none; }
@@ -1008,7 +1030,10 @@ const char index_html[] PROGMEM = R"rawliteral(
       <p style="font-size:0.8rem; color:#57606a; margin-bottom:12px; font-weight:600;">Set a 4-digit PIN and recovery question to secure web interface access.</p>
 
       <div class="wifi-input-group">
-        <input type="password" maxlength="4" id="w-pin-input" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="Set 4-Digit PIN">
+        <div class="password-wrap">
+          <input type="password" maxlength="4" id="w-pin-input" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="Set 4-Digit PIN">
+          <button type="button" class="eye-toggle-btn" onclick="togglePasswordVisibility(['w-pin-input'], this)" aria-label="Show PIN" title="Show PIN"></button>
+        </div>
         <input type="text" id="w-sec-q-input" class="wifi-input" placeholder="Security Question (e.g. Pet Name?)">
         <input type="text" id="w-sec-a-input" class="wifi-input" placeholder="Security Answer">
       </div>
@@ -1034,7 +1059,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 
       <div class="wifi-input-group">
         <input type="text" id="w-wifi-ssid" class="wifi-input" placeholder="Wi-Fi Network SSID">
-        <input type="password" id="w-wifi-pass" class="wifi-input" placeholder="Wi-Fi Password">
+        <div class="password-wrap">
+          <input type="password" id="w-wifi-pass" class="wifi-input" placeholder="Wi-Fi Password">
+          <button type="button" class="eye-toggle-btn" onclick="togglePasswordVisibility(['w-wifi-pass'], this)" aria-label="Show password" title="Show password"></button>
+        </div>
       </div>
       <div class="fc-actions">
         <button class="fc-btn" style="background:#e8f5e9;color:#2e7d32;" onclick="connectWifiFromWizard()">Connect Network</button>
@@ -1103,7 +1131,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 
       <div class="wifi-input-group" style="margin-bottom: 10px;">
         <input type="text" id="forgot-answer-input" class="wifi-input" placeholder="Your Security Answer">
-        <input type="password" maxlength="4" id="forgot-new-pin" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="New 4-Digit PIN">
+        <div class="password-wrap">
+          <input type="password" maxlength="4" id="forgot-new-pin" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="New 4-Digit PIN">
+          <button type="button" class="eye-toggle-btn" onclick="togglePasswordVisibility(['forgot-new-pin'], this)" aria-label="Show PIN" title="Show PIN"></button>
+        </div>
       </div>
 
       <div class="fc-actions" style="margin-bottom: 8px;">
@@ -1205,7 +1236,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 
       <div class="wifi-input-group">
         <input type="text" id="wifi-ssid" class="wifi-input" placeholder="Wi-Fi SSID (Network Name)">
-        <input type="password" id="wifi-pass" class="wifi-input" placeholder="Wi-Fi Password">
+        <div class="password-wrap">
+          <input type="password" id="wifi-pass" class="wifi-input" placeholder="Wi-Fi Password">
+          <button type="button" class="eye-toggle-btn" onclick="togglePasswordVisibility(['wifi-pass'], this)" aria-label="Show password" title="Show password"></button>
+        </div>
       </div>
 
       <div class="fc-actions">
@@ -1248,7 +1282,10 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="setting-group" style="margin-bottom: 16px;">
         <div class="setting-header" style="margin-bottom: 8px;"><span>🔐 Security & Authentication</span></div>
         <div class="wifi-input-group" style="margin-bottom: 8px;">
-          <input type="password" maxlength="4" id="cfg-pin" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="New 4-Digit PIN">
+          <div class="password-wrap">
+            <input type="password" maxlength="4" id="cfg-pin" class="wifi-input" inputmode="numeric" pattern="[0-9]*" placeholder="New 4-Digit PIN">
+            <button type="button" class="eye-toggle-btn" onclick="togglePasswordVisibility(['cfg-pin'], this)" aria-label="Show PIN" title="Show PIN"></button>
+          </div>
           <input type="text" id="cfg-sec-q" class="wifi-input" placeholder="Security Question">
           <input type="text" id="cfg-sec-a" class="wifi-input" placeholder="Security Answer">
         </div>
@@ -1704,13 +1741,6 @@ function downloadNoteFile(ext) {
   URL.revokeObjectURL(url);
 }
 
-function repeatLastSpeech() {
-  const toSpeak = lastUtteranceText || currentFullText;
-  if (!toSpeak) return;
-  const baseIdx = (toSpeak === currentFullText) ? 0 : -1;
-  speakTextUtterance(toSpeak, true, false, baseIdx);
-}
-
 /* ---------- FLASHCARD DATASET ---------- */
 const fcDataset = [
   // Lowercase Letters (Text Indicator: Dots 5-6)
@@ -1906,6 +1936,30 @@ function focusNextPin(currentIdx) {
     submitPinAuth();
   }
 }
+
+const EYE_OPEN_SVG = '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
+const EYE_OFF_SVG  = '<svg viewBox="0 0 24 24"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/></svg>';
+
+function togglePasswordVisibility(inputIds, btnEl) {
+  const inputs = inputIds.map(id => document.getElementById(id)).filter(Boolean);
+  if (!inputs.length) return;
+
+  const isCurrentlyHidden = inputs[0].type === 'password';
+  const nextType = isCurrentlyHidden ? 'text' : 'password';
+
+  inputs.forEach(inp => { inp.type = nextType; });
+
+  if (btnEl) {
+    btnEl.innerHTML = isCurrentlyHidden ? EYE_OFF_SVG : EYE_OPEN_SVG;
+    const label = isCurrentlyHidden ? 'Hide password' : 'Show password';
+    btnEl.setAttribute('aria-label', label);
+    btnEl.title = label;
+  }
+}
+
+document.querySelectorAll('.eye-toggle-btn, .pin-eye-btn').forEach(btn => {
+  btn.innerHTML = EYE_OPEN_SVG;
+});
 
 function submitPinAuth() {
   const p1 = document.getElementById('pin-d1').value;
@@ -2535,6 +2589,8 @@ function updateVisualSelection(start, end) {
   positionSelectionHandles(start, end);
 }
 
+let lastRenderSignature = "";
+
 function renderFullText(text, pos, brailleArr, selStart, selEnd){
   currentFullText = text;
   currentCursorPos = pos;
@@ -2545,6 +2601,14 @@ function renderFullText(text, pos, brailleArr, selStart, selEnd){
 
   currentSelStart = selStart;
   currentSelEnd = selEnd;
+
+  const brailleSig = Array.isArray(brailleArr) ? brailleArr.join(',') : '';
+  const nextSignature = `${text}|${pos}|${selStart}|${selEnd}|${brailleSig}`;
+  if (nextSignature === lastRenderSignature) {
+    applyTtsHighlightToDom();
+    return;
+  }
+  lastRenderSignature = nextSignature;
 
   const container = document.getElementById('full-text-box');
   const prevScrollTop = container.scrollTop;
@@ -2861,16 +2925,73 @@ let ttsCurrentChunkPredictedMs = 0;
 const PAUSE_SVG_PATH = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
 const PLAY_SVG_PATH  = '<path d="M8 5v14l11-7z"/>';
 
+let ttsSyncLcdCursor = false;
+let lcdCursorSyncInFlight = false;
+let lastSyncedLcdWordKey = "";
+
+function syncLcdCursorToTtsWord(wordStart, wordEnd) {
+  if (!ttsSyncLcdCursor || DEV_MODE || isDeviceDisconnected) return;
+  const wordKey = `${wordStart}:${wordEnd}`;
+  if (wordKey === lastSyncedLcdWordKey || lcdCursorSyncInFlight) return;
+
+  lastSyncedLcdWordKey = wordKey;
+  lcdCursorSyncInFlight = true;
+
+  fetch(`/api/setcursor?pos=${wordStart}&wordEnd=${wordEnd}&keepSel=1`, { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (d) {
+        currentCursorPos = d.cursor || wordStart;
+        const l0 = document.getElementById('lcd-line0');
+        const l1 = document.getElementById('lcd-line1');
+        if (l0 && d.lcd0) l0.innerText = d.lcd0;
+        if (l1 && d.lcd1) l1.innerText = d.lcd1;
+      }
+    })
+    .catch(() => {})
+    .finally(() => {
+      lcdCursorSyncInFlight = false;
+    });
+}
+
+function scrollViewerToTtsWord(startIdx, endIdx) {
+  const box = document.getElementById('full-text-box');
+  if (!box) return;
+
+  const firstEl = box.querySelector(`.char-pair[data-idx="${startIdx}"]`);
+  const lastEl = box.querySelector(`.char-pair[data-idx="${Math.max(startIdx, endIdx - 1)}"]`) || firstEl;
+  if (!firstEl || !lastEl) return;
+
+  const boxRect = box.getBoundingClientRect();
+  const firstRect = firstEl.getBoundingClientRect();
+  const lastRect = lastEl.getBoundingClientRect();
+  const pad = 8;
+
+  if (firstRect.top < boxRect.top + pad) {
+    box.scrollTop += (firstRect.top - boxRect.top) - pad;
+  } else if (lastRect.bottom > boxRect.bottom - pad) {
+    box.scrollTop += (lastRect.bottom - boxRect.bottom) + pad;
+  }
+}
+
 function applyTtsHighlightToDom() {
   const pairs = document.querySelectorAll('#full-text-box .char-pair');
   const active = ttsHighlightStart >= 0 && ttsHighlightEnd > ttsHighlightStart;
+  const hasRange = currentSelStart !== currentSelEnd && currentSelStart < currentSelEnd;
 
   pairs.forEach((pair) => {
     const i = parseInt(pair.getAttribute('data-idx'), 10);
     if (active && i >= ttsHighlightStart && i < ttsHighlightEnd) {
       pair.classList.add('tts-speaking');
+      pair.classList.remove('cursor-here');
     } else {
       pair.classList.remove('tts-speaking');
+      if (hasRange && i >= currentSelStart && i < currentSelEnd) {
+        pair.classList.add('selected');
+        pair.classList.remove('cursor-here');
+      } else if (!active && !hasRange && i === currentCursorPos) {
+        pair.classList.add('cursor-here');
+      }
     }
   });
 }
@@ -2879,6 +3000,8 @@ function clearTtsHighlight() {
   ttsHighlightStart = -1;
   ttsHighlightEnd = -1;
   ttsBufferBaseIdx = -1;
+  ttsSyncLcdCursor = false;
+  lastSyncedLcdWordKey = "";
   ttsActiveWordTimeline = [];
   applyTtsHighlightToDom();
 }
@@ -2908,16 +3031,8 @@ function highlightSpokenWordAt(charIndexInQueue) {
   ttsHighlightStart = nextStart;
   ttsHighlightEnd = nextEnd;
   applyTtsHighlightToDom();
-
-  const box = document.getElementById('full-text-box');
-  const activeEl = box ? box.querySelector(`.char-pair[data-idx="${ttsHighlightStart}"]`) : null;
-  if (box && activeEl) {
-    const boxRect = box.getBoundingClientRect();
-    const elRect = activeEl.getBoundingClientRect();
-    if (elRect.top < boxRect.top || elRect.bottom > boxRect.bottom) {
-      activeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
-  }
+  scrollViewerToTtsWord(nextStart, nextEnd);
+  syncLcdCursorToTtsWord(nextStart, nextEnd);
 }
 
 // Split text into natural sentence/clause chunks so Android re-syncs timing at every pause
@@ -3178,13 +3293,15 @@ function speakNextChunk() {
   window.speechSynthesis.speak(utter);
 }
 
-function speakTextUtterance(str, force = false, isResumeChunk = false, bufferStartIdx = -1) {
+function speakTextUtterance(str, force = false, isResumeChunk = false, bufferStartIdx = -1, syncLcd = false) {
   if (!str || str.trim() === '') return;
   if (!isResumeChunk) {
     lastUtteranceText = str;
     ttsFullQueueText = str;
     ttsCharOffset = 0;
     ttsBufferBaseIdx = bufferStartIdx;
+    ttsSyncLcdCursor = syncLcd && (bufferStartIdx >= 0);
+    lastSyncedLcdWordKey = "";
     ttsBoundarySupported = false;
   }
   if (!force && currentTtsMode === 0) return;
@@ -3200,6 +3317,30 @@ function speakTextUtterance(str, force = false, isResumeChunk = false, bufferSta
     }
   } else if (force) {
     alert('Web Speech TTS is not supported in this captive browser popup. Please open in Chrome or Safari at http://192.168.4.1');
+  }
+}
+
+function repeatLastSpeech() {
+  const toSpeak = lastUtteranceText || currentFullText;
+  if (!toSpeak) return;
+  const isBuffer = (toSpeak === currentFullText);
+  speakTextUtterance(toSpeak, true, false, isBuffer ? 0 : -1, isBuffer);
+}
+
+function speakSelection() {
+  const start = Math.min(currentSelStart, currentSelEnd);
+  const end = Math.max(currentSelStart, currentSelEnd);
+  if (start < end && currentFullText) {
+    const selText = currentFullText.substring(start, end);
+    speakTextUtterance(selText, true, false, start, true);
+  }
+}
+
+function speakFullTextOrSelection() {
+  if (currentSelStart < currentSelEnd) {
+    speakSelection();
+  } else {
+    speakTextUtterance(currentFullText, true, false, 0, true);
   }
 }
 
@@ -3259,23 +3400,6 @@ function handleLiveTtsFeedback(d) {
 
   lastSpokenText = newText;
   lastSpokenCursor = newPos;
-}
-
-function speakSelection() {
-  const start = Math.min(currentSelStart, currentSelEnd);
-  const end = Math.max(currentSelStart, currentSelEnd);
-  if (start < end && currentFullText) {
-    const selText = currentFullText.substring(start, end);
-    speakTextUtterance(selText, true, false, start);
-  }
-}
-
-function speakFullTextOrSelection() {
-  if (currentSelStart < currentSelEnd) {
-    speakSelection();
-  } else {
-    speakTextUtterance(currentFullText, true, false, 0);
-  }
 }
 
 function copySelection() {
@@ -3618,6 +3742,7 @@ function updateWifiSignalUI(connected, rssi) {
 }
 
 const DEV_MODE =
+  window.location.protocol === 'file:' ||
   new URLSearchParams(window.location.search).get('dev') === '1' ||
   ['127.0.0.1', 'localhost'].includes(window.location.hostname);
 
@@ -3625,7 +3750,8 @@ let currentBootId = null;
 let failedPollCount = 0;
 let isDeviceDisconnected = false;
 let pollTimer = null;
-const DISCONNECT_THRESHOLD = 4; // Ignore brief 1-2 poll hiccups
+let inFlightCmdCount = 0;
+const DISCONNECT_THRESHOLD = 3;
 
 function setDisconnectedState(disconnected, force = false) {
   if (DEV_MODE && !force) return;
@@ -3640,43 +3766,37 @@ function setDisconnectedState(disconnected, force = false) {
       pill.style.display = 'inline-flex';
     }
     if (statusText) statusText.innerText = 'Offline • Reconnecting...';
-  } else if (isDeviceDisconnected) {
+  } else {
     isDeviceDisconnected = false;
     failedPollCount = 0;
     pill.style.display = 'none';
   }
 }
 
-async function apiFetch(url, timeoutMs = 2000) {
+async function apiFetch(url, timeoutMs = 2500, isBackgroundPoll = false) {
   if (DEV_MODE) return Promise.reject(new Error('DEV_MODE active'));
 
-  let res;
+  if (!isBackgroundPoll) inFlightCmdCount++;
   try {
-    res = await fetchWithTimeout(url, {}, timeoutMs);
+    const res = await fetchWithTimeout(url, {}, timeoutMs);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+
+    const data = await res.json();
+    failedPollCount = 0;
+    if (isDeviceDisconnected) setDisconnectedState(false);
+    return data;
   } catch (err) {
-    if (err.name !== 'AbortError') {
-      failedPollCount = DISCONNECT_THRESHOLD;
+    failedPollCount++;
+    if (failedPollCount >= DISCONNECT_THRESHOLD) {
       setDisconnectedState(true);
-    } else {
-      failedPollCount++;
-      if (failedPollCount >= DISCONNECT_THRESHOLD) setDisconnectedState(true);
     }
     throw err;
+  } finally {
+    if (!isBackgroundPoll) inFlightCmdCount = Math.max(0, inFlightCmdCount - 1);
   }
-
-  if (!res.ok) {
-    failedPollCount++;
-    if (failedPollCount >= DISCONNECT_THRESHOLD) setDisconnectedState(true);
-    throw new Error('HTTP ' + res.status);
-  }
-
-  failedPollCount = 0;
-  setDisconnectedState(false);
-
-  return await res.json();
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 1800) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 2500) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -3688,7 +3808,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 1800) {
 
 function scheduleNextPoll() {
   clearTimeout(pollTimer);
-  const interval = isDeviceDisconnected ? 1200 : (document.hidden ? 1000 : 300);
+  const interval = isDeviceDisconnected ? 1200 : (document.hidden ? 1000 : 350);
   pollTimer = setTimeout(pollState, interval);
 }
 
@@ -3698,14 +3818,19 @@ async function manualReconnectCheck() {
   if (btn) btn.disabled = true;
   if (statusText) statusText.innerText = 'Checking connection...';
 
+  clearTimeout(pollTimer);
+  isPolling = false;
+
   try {
-    const d = await apiFetch('/api/state', 2000);
+    const d = await apiFetch('/api/state', 2500, false);
+    setDisconnectedState(false);
     updateState(d);
-    scheduleNextPoll();
   } catch (err) {
+    setDisconnectedState(true);
     if (statusText) statusText.innerText = 'Still unreachable. Retrying...';
   } finally {
     if (btn) btn.disabled = false;
+    scheduleNextPoll();
   }
 }
 
@@ -3831,16 +3956,28 @@ async function triggerOtaUpdate() {
     resetOtaBtn('❌ Connection lost or failed to initiate OTA update.');
   }
 }
-
+let hasAnnouncedConnect = false;
 let isPolling = false;
+
 async function pollState() {
-  if (DEV_MODE || isPolling) return;
+  if (DEV_MODE) return;
+  if (isPolling || inFlightCmdCount > 0) {
+    scheduleNextPoll();
+    return;
+  }
+
   isPolling = true;
   clearTimeout(pollTimer);
+  const wasDisconnected = isDeviceDisconnected;
 
   try {
-    const d = await apiFetch('/api/state', 1800);
+    const d = await apiFetch('/api/state', 2500, true);
     updateState(d);
+
+    if (wasDisconnected || !hasAnnouncedConnect) {
+      hasAnnouncedConnect = true;
+      fetchWithTimeout('/api/cmd?action=notify&msg=Device%20Connected&sub=Web%20UI%20Active', {}, 1500).catch(() => {});
+    }
   } catch (e) {
   } finally {
     isPolling = false;

@@ -15,13 +15,15 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.7.2"
+#define FIRMWARE_VERSION "1.0.7.5"
 
 Preferences prefs;
 uint32_t bootId = 0;
 bool isSetupDone = false;
 
 // LCD setup (I2C)
+#define I2C_SDA_PIN 19
+#define I2C_SCL_PIN 23
 #define I2C_ADDR 0x27  
 LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 
@@ -190,6 +192,26 @@ void pushUndoState();
 void handleApiState();
 void showFeedbackMode();
 String lookupUebSymbolPair(byte prefix, byte cell);
+
+unsigned long lcdBannerUntil = 0;
+String lcdBannerLine0 = "";
+String lcdBannerLine1 = "";
+
+volatile bool pendingApConnectBanner = false;
+unsigned long pendingBannerDuration = 2000;
+
+void showLcdBanner(const String& line0, const String& line1, unsigned long durationMs = 2000) {
+  lcdBannerLine0 = line0.substring(0, 16);
+  lcdBannerLine1 = line1.substring(0, 16);
+  while (lcdBannerLine0.length() < 16) lcdBannerLine0 += ' ';
+  while (lcdBannerLine1.length() < 16) lcdBannerLine1 += ' ';
+
+  lcd.setCursor(0, 0);
+  lcd.print(lcdBannerLine0);
+  lcd.setCursor(0, 1);
+  lcd.print(lcdBannerLine1);
+  lcdBannerUntil = millis() + durationMs;
+}
 
 // Text Selection Helpers
 bool hasSelection() {
@@ -389,50 +411,49 @@ String brailleToChar(byte bits, bool commitState = true) {
 
   // Text Indicator (Dots 5-6)
   if (pattern == 48 && !nextSpecial && !specialLock && currentMode != SPECIAL) {
-    if (!commitState) return ">";
-
-    if (textPressedOnce) {
-      textLock = true;
-      nextText = false;
-      textPressedOnce = false;
-      showTempIndicator('>', 2);
-      return "";
-    } else {
-      textPressedOnce = true;
-      nextText = true;
-      textLock = false;
-      showTempIndicator('>', 1);
-      return "";
+    if (currentMode == NUMBER || nextNumber || numberLock) {
+      if (!commitState) return ">";
+      if (textPressedOnce) {
+        textLock = true;
+        nextText = false;
+        textPressedOnce = false;
+        showTempIndicator('>', 2);
+        return "";
+      } else {
+        textPressedOnce = true;
+        nextText = true;
+        textLock = false;
+        showTempIndicator('>', 1);
+        return "";
+      }
     }
+    if (!commitState) return ">";
+    return ">";
   }
   if (commitState && pattern != 48) textPressedOnce = false;
 
   // 1. Resolve two-cell UEB symbols ([], {}, <>, etc.)
   if (pendingSymbolPrefix != 0) {
-    String sym = lookupUebSymbolPair(pendingSymbolPrefix, pattern);
-    byte usedPrefix = pendingSymbolPrefix;
-    if (sym.length() > 0) {
-      if (commitState) {
-        pendingSymbolPrefix = 0;
-        nextSpecial = false;
-        specialPressedOnce = false;
-        clearTempIndicator();
-      }
-      return sym;
-    }
-    // Not a 2-cell symbol pair: clear prefix, keep nextSpecial active for single-cell punctuation
+    uint8_t usedPrefix = pendingSymbolPrefix;
     if (commitState) {
       pendingSymbolPrefix = 0;
-      if (usedPrefix == 40) {
-        prefixStr = "-";
-      }
+    }
+    String pair = lookupUebSymbolPair(usedPrefix, pattern);
+    if (pair.length() > 0) {
+      return pair;
+    }
+    if (usedPrefix == 40 || usedPrefix == 24) {
+      prefixStr = "-";
+    } else if (usedPrefix == 8) {
+      prefixStr = "^";
     }
   }
 
-  if (pattern == 8 || pattern == 40) {
-    if (!commitState) return (pattern == 40) ? "-" : "^";
+  if (pattern == 8 || pattern == 24 || pattern == 40) {
+    char ind = (pattern == 40 || pattern == 24) ? '-' : '^';
+    if (!commitState) return String(ind);
     pendingSymbolPrefix = pattern;
-    showTempIndicator((pattern == 40) ? '-' : '^', 1);
+    showTempIndicator(ind, 1);
     return "";
   }
 
@@ -477,14 +498,9 @@ String brailleToChar(byte bits, bool commitState = true) {
 
   if (activeMode == TEXT) {
     out = brailleToText(pattern);
-    if (out == "~") {
-      String s = specialFromBraille(pattern);
-      if (s != "0") out = String(s);
-      else {
-        char n = brailleToNumber(pattern);
-        if (n != '?') out = String(n);
-        else out = "?";
-      }
+    // UEB rule: "ing" (44) cannot stand alone or start a word; treat as '+' or require preceding letter
+    if (pattern == 44 && (fullBuffer.length() == 0 || cursorPos == 0 || fullBuffer[cursorPos - 1] == ' ')) {
+      out = "+";
     }
   } else if (activeMode == SPECIAL) {
     String s = specialFromBraille(pattern);
@@ -726,6 +742,10 @@ void checkBootAutoUpdate() {
 
 void redrawLCDLine() {
   if (hasSelection()) {
+    int lcdCur = cursorPos - windowStart;
+    if (selectStart >= windowStart && selectStart <= cursorPos) lcdCur++;
+    if (selectEnd >= windowStart && selectEnd < cursorPos) lcdCur++;
+    lcd.setCursor(constrain(lcdCur, 0, 15), 1);
     int selLen = selectEnd - selectStart;
     String selSub = fullBuffer.substring(selectStart, selectEnd);
     lcd.setCursor(0, 0);
@@ -869,7 +889,7 @@ void saveLineToEEPROM() {
     checkText.trim();
     if (checkText.length() == 0) {
         lcd.setCursor(0, 0);
-        lcd.print("Nothing to Save ");
+        showLcdBanner("Nothing to Save ", "Buffer is Empty ", 1200);
         errorTone();
         smartDelay(1000);
         updateLCDMode();
@@ -959,16 +979,9 @@ void loadLineFromEEPROM() {
         chunk = chunk.substring(0, insertLen);
     }
 
-    for (int i = oldLen - 1; i >= cursorPos; i--) {
-        fullBufferBraille[i + insertLen] = fullBufferBraille[i];
-    }
-
-    for (int i = 0; i < insertLen; i++) {
-        fullBufferBraille[cursorPos + i] = charToBraille(chunk[i]);
-    }
-
     fullBuffer = fullBuffer.substring(0, cursorPos) + chunk + fullBuffer.substring(cursorPos);
     cursorPos += insertLen;
+    recomputeBufferBraille();
 
     scrollWindow();
     redrawLCDLine();
@@ -1098,6 +1111,152 @@ String lookupUebSymbolPair(byte prefix, byte cell) {
 }
 
 const int contractionCount = sizeof(uebContractions)/sizeof(uebContractions[0]);
+
+int encodeUebAbbrToCells(const String& rawLetters, byte prefixDots, byte* outCells, int maxCells) {
+  String pat = rawLetters;
+  pat.trim();
+  if (pat.length() == 0 || maxCells <= 0) return 0;
+
+  int count = 0;
+  if (prefixDots == 24) { // Dots 4-5 prefix (e.g., -th = those)
+    if (count < maxCells) outCells[count++] = 24;
+    if (count < maxCells) outCells[count++] = 57;
+    return count;
+  }
+  if (prefixDots == 40 || prefixDots == 48) { // Final-letter groupsigns (- or >)
+    if (count < maxCells) outCells[count++] = prefixDots;
+    if (pat.length() >= 2 && count < maxCells) {
+      outCells[count++] = charToBraille(pat[1]);
+    }
+    return count;
+  }
+
+  // Whole-word lower wordsigns
+  if (pat == "en") { outCells[0] = 34; return 1; }
+  if (pat == "in") { outCells[0] = 38; return 1; }
+  if (pat == "by") { outCells[0] = 52; return 1; }
+
+  int pos = 0;
+  if (pat[0] == '>') {
+    if (count < maxCells) outCells[count++] = 16; // Dot 5 indicator
+    pos = 1;
+  }
+
+  while (pos < (int)pat.length() && count < maxCells) {
+    String rem = pat.substring(pos);
+    if (rem.startsWith("the"))      { outCells[count++] = 46; pos += 3; }
+    else if (rem.startsWith("ch"))  { outCells[count++] = 33; pos += 2; }
+    else if (rem.startsWith("th"))  { outCells[count++] = 57; pos += 2; }
+    else if (rem.startsWith("sh"))  { outCells[count++] = 41; pos += 2; }
+    else if (rem.startsWith("wh"))  { outCells[count++] = 49; pos += 2; }
+    else if (rem.startsWith("ou"))  { outCells[count++] = 51; pos += 2; }
+    else if (rem.startsWith("er"))  { outCells[count++] = 59; pos += 2; }
+    else if (rem.startsWith("st"))  { outCells[count++] = 12; pos += 2; }
+    else if (rem.startsWith("bb"))  { outCells[count++] = 6;  pos += 2; }
+    else if (rem.startsWith("cc"))  { outCells[count++] = 18; pos += 2; }
+    else if (rem.startsWith("gg"))  { outCells[count++] = 54; pos += 2; }
+    else {
+      outCells[count++] = charToBraille(pat[pos]);
+      pos += 1;
+    }
+  }
+  return count;
+}
+
+void recomputeBufferBraille() {
+  int len = fullBuffer.length();
+  if (len > MAX_BUFFER) len = MAX_BUFFER;
+
+  // Baseline Grade 1 mapping
+  for (int i = 0; i < len; i++) {
+    fullBufferBraille[i] = charToBraille(fullBuffer[i]);
+  }
+  if (contractionMode == 2) return; // Grade 1: Uncontracted
+
+  int i = 0;
+  while (i < len) {
+    while (i < len && fullBuffer[i] == ' ') i++;
+    if (i >= len) break;
+
+    int wStart = i;
+    while (i < len && fullBuffer[i] != ' ') i++;
+    int wEnd = i;
+
+    // Trim leading/trailing punctuation from the word token
+    int coreStart = wStart;
+    int coreEnd = wEnd;
+    while (coreStart < coreEnd && !isAlphaNumeric(fullBuffer[coreStart])) coreStart++;
+    while (coreEnd > coreStart && !isAlphaNumeric(fullBuffer[coreEnd - 1])) coreEnd--;
+
+    int coreLen = coreEnd - coreStart;
+    if (coreLen <= 0) continue;
+
+    String lowerWord = fullBuffer.substring(coreStart, coreEnd);
+    lowerWord.toLowerCase();
+
+    byte cells[16];
+    int cellCount = 0;
+    int targetStart = coreStart;
+    int targetLen = coreLen;
+
+    if (contractionMode == 0) {
+      // 1. Check UEB strong wordsigns (and, for, of, the, with)
+      if (lowerWord == "and")       { cells[0] = 47; cellCount = 1; }
+      else if (lowerWord == "for")  { cells[0] = 63; cellCount = 1; }
+      else if (lowerWord == "of")   { cells[0] = 55; cellCount = 1; }
+      else if (lowerWord == "the")  { cells[0] = 46; cellCount = 1; }
+      else if (lowerWord == "with") { cells[0] = 62; cellCount = 1; }
+
+      // 2. Check UEB whole-word and final-letter contractions
+      if (cellCount == 0) {
+        for (int c = 0; c < contractionCount; c++) {
+          uint8_t prefixDots = *(const uint8_t*)&uebContractions[c];
+          String fullWord = String(uebContractions[c].contraction);
+          fullWord.trim();
+
+          if (prefixDots == 40 || prefixDots == 48) {
+            if (lowerWord.length() > fullWord.length() && lowerWord.endsWith(fullWord)) {
+              targetStart = coreEnd - fullWord.length();
+              targetLen = fullWord.length();
+              cellCount = encodeUebAbbrToCells(uebContractions[c].letters, prefixDots, cells, 16);
+              break;
+            }
+          } else if (lowerWord == fullWord) {
+            cellCount = encodeUebAbbrToCells(uebContractions[c].letters, prefixDots, cells, 16);
+            break;
+          }
+        }
+      }
+
+      // 3. Check UEB -ing final groupsign
+      if (cellCount == 0 && lowerWord.length() > 3 && lowerWord.endsWith("ing")) {
+        targetStart = coreEnd - 3;
+        targetLen = 3;
+        cells[0] = 44;
+        cellCount = 1;
+      }
+    } else if (contractionMode == 1) {
+      // Filipino Grade 2 contractions
+      for (int c = 0; c < filipinoContractionCount; c++) {
+        if (lowerWord == filipinoContractions[c].full) {
+          const char* abbr = filipinoContractions[c].abbr;
+          int aLen = strlen(abbr);
+          for (int k = 0; k < aLen && k < 16; k++) {
+            cells[cellCount++] = charToBraille(abbr[k]);
+          }
+          break;
+        }
+      }
+    }
+
+    if (cellCount > 0 && cellCount <= targetLen) {
+      for (int k = 0; k < targetLen; k++) {
+        fullBufferBraille[targetStart + k] = (k < cellCount) ? cells[k] : 0;
+      }
+    }
+  }
+}
+
 void handleSpaceKeyDirect() {
     if (contractionMode == 2) return; // Grade 1: Uncontracted spelling
     if (fullBuffer.length() == 0 || cursorPos == 0) return;
@@ -1177,13 +1336,9 @@ void handleSpaceKeyDirect() {
 
         fullBuffer = fullBuffer.substring(0, replaceStart) + replacement + fullBuffer.substring(cursorPos);
         cursorPos = newTailStart;
-
-        for (int k = 0; k < replacement.length(); k++) {
-            fullBufferBraille[replaceStart + k] = charToBraille(replacement[k]);
-        }
-
         ::hasContraction = true;
     }
+    recomputeBufferBraille();
 }
 
 void applyBrightness(int percent) {
@@ -1201,7 +1356,7 @@ void startUP() {
   startupTone();
 
   int barWidth = 16;
-  int speed = 80;
+  int speed = 100;
   for (int i = 0; i <= barWidth; i++) {
       lcd.setCursor(0, 1);
       for (int j = 0; j < barWidth; j++) {
@@ -1299,6 +1454,7 @@ void handleApiSaveSecurity() {
 
     if (saveSecurityPreferences(p, q, a)) {
       server.send(200, "application/json", "{\"status\":\"success\",\"msg\":\"Security settings updated!\"}");
+      showLcdBanner("Security Saved  ", "PIN Updated     ", 1800);
       return;
     }
   }
@@ -1343,9 +1499,28 @@ void handleApiInsert() {
     String incoming = server.arg("text");
     if (incoming.length() > 0) {
       pushUndoState();
-      for (int i = 0; i < incoming.length(); i++) {
-        insertAtCursor(incoming[i], charToBraille(incoming[i]));
+      if (hasSelection()) {
+        deleteSelection();
       }
+
+      int oldLen = fullBuffer.length();
+      int insertLen = incoming.length();
+      if (oldLen + insertLen >= MAX_BUFFER) {
+        insertLen = MAX_BUFFER - 1 - oldLen;
+        if (insertLen <= 0) {
+          handleApiState();
+          return;
+        }
+        incoming = incoming.substring(0, insertLen);
+      }
+
+      fullBuffer = fullBuffer.substring(0, cursorPos) + incoming + fullBuffer.substring(cursorPos);
+      cursorPos += insertLen;
+      recomputeBufferBraille();
+
+      clearSelection();
+      scrollWindow();
+      redrawLCDLine();
     }
   }
   handleApiState();
@@ -1426,11 +1601,21 @@ void handleApiCmd() {
       handleHashSinglePress();
       brailleBits = 0;
     } else if (act == "set_contraction_mode" && server.hasArg("val")) {
+      const char* conLabel = (contractionMode == 0) ? "UEB Grade 2     "
+                          : (contractionMode == 1) ? "Filipino Braille"
+                                                    : "Grade 1 Off     ";
+      showLcdBanner("Contraction Mode", conLabel, 1500);
       modeTone();
       contractionMode = constrain(server.arg("val").toInt(), 0, 2);
+      recomputeBufferBraille();
       prefs.begin("settings", false);
       prefs.putInt("conMode", contractionMode);
       prefs.end();
+    } else if (act == "notify") {
+      String msg = server.hasArg("msg") ? server.arg("msg") : "Device Connected";
+      String sub = server.hasArg("sub") ? server.arg("sub") : "Web App Linked  ";
+      modeTone();
+      showLcdBanner(msg, sub, 2000);
     }
   }
   handleApiState();
@@ -1475,7 +1660,7 @@ void handleApiSlot() {
       f.print(fullBuffer);
       f.close();
       lcd.setCursor(0, 0);
-      lcd.print("Saved Slot " + String(slot) + "    ");
+      showLcdBanner("Saved Slot " + String(slot) + "    ", "Memory Updated  ", 1200);
       saveTone();
       smartDelay(700);
       updateLCDMode();
@@ -1492,7 +1677,7 @@ void handleApiSlot() {
     while (loaded.endsWith(" ")) loaded.remove(loaded.length() - 1);
     if (loaded.length() == 0) {
       lcd.setCursor(0, 0);
-      lcd.print("Slot " + String(slot) + " Empty!   ");
+      showLcdBanner("Slot " + String(slot) + " Empty!   ", "No Saved Text   ", 1200);
       errorTone();
       smartDelay(900);
       updateLCDMode();
@@ -1536,16 +1721,9 @@ void handleApiSlot() {
       chunk = chunk.substring(0, insertLen);
     }
 
-    for (int i = oldLen - 1; i >= cursorPos; i--) {
-      fullBufferBraille[i + insertLen] = fullBufferBraille[i];
-    }
-
-    for (int i = 0; i < insertLen; i++) {
-      fullBufferBraille[cursorPos + i] = charToBraille(chunk[i]);
-    }
-
     fullBuffer = fullBuffer.substring(0, cursorPos) + chunk + fullBuffer.substring(cursorPos);
     cursorPos += insertLen;
+    recomputeBufferBraille();
 
     scrollWindow();
     redrawLCDLine();
@@ -1685,11 +1863,11 @@ void checkWifiStatus() {
     isConnecting = false;
     wifiLostStart = 0;
     autoConnectIndex = -1;
-    wifiStatusMsg = "Connected to: " + WiFi.SSID();
+    wifiStatusMsg = "Connected to: " + WiFi.SSID() + " (" + WiFi.localIP().toString() + ")";
     wifiConnected = true;
 
-    updateLCDMode();
-    redrawLCDLine();
+    modeTone();
+    showLcdBanner("WiFi Connected  ", WiFi.SSID(), 2000);
     return;
   } 
 
@@ -1806,9 +1984,12 @@ void handleApiConnect() {
 }
 
 void handleApiScan() {
-  if (isConnecting || WiFi.status() != WL_CONNECTED) {
+  isConnecting = false;
+  autoConnectIndex = -1;
+  WiFi.scanDelete();
+  if (WiFi.status() != WL_CONNECTED) {
     WiFi.disconnect(false);
-    delay(100);
+    delay(120);
   }
 
   int n = WiFi.scanNetworks(false, true);
@@ -1835,6 +2016,7 @@ void handleApiFinishSetup() {
   prefs.putBool("setupDone", true);
   prefs.end();
   server.send(200, "application/json", "{\"status\":\"Setup completed!\"}");
+  showLcdBanner("Setup Complete! ", "Braillify Ready ", 2000);
 }
 
 void handleApiSetText() {
@@ -1860,6 +2042,7 @@ void handleApiSetText() {
     for (int i = 0; i < fullBuffer.length() && i < MAX_BUFFER; i++) {
       fullBufferBraille[i] = charToBraille(fullBuffer[i]);
     }
+    recomputeBufferBraille();
 
     scrollWindow();
     redrawLCDLine();
@@ -1967,6 +2150,7 @@ void getSystemStateJson(String &jsonOut) {
     }
   }
 
+
   String line1 = "";
   if (fullBuffer.length() <= windowStart) {
     line1 = "";
@@ -1976,6 +2160,11 @@ void getSystemStateJson(String &jsonOut) {
     line1 = fullBuffer.substring(windowStart, end);
   }
   while (line1.length() < 16) line1 += " ";
+
+  if (lcdBannerUntil > millis()) {
+    line0 = lcdBannerLine0;
+    line1 = lcdBannerLine1;
+  }
 
   String preview = brailleToChar(brailleBits, false);
   if (preview == "") preview = " ";
@@ -1988,11 +2177,7 @@ void getSystemStateJson(String &jsonOut) {
   jsonBrailleArray.reserve(1024);
   int len = fullBuffer.length();
   for(int i = 0; i < len; i++) {
-    byte b = fullBufferBraille[i];
-    if (b == 0 && fullBuffer[i] != ' ') {
-      b = charToBraille(fullBuffer[i]);
-    }
-    jsonBrailleArray += String(b);
+    jsonBrailleArray += String(fullBufferBraille[i]);
     if(i < len - 1) jsonBrailleArray += ",";
   }
   jsonBrailleArray += "]";
@@ -2003,7 +2188,7 @@ void getSystemStateJson(String &jsonOut) {
   if (connected) {
     String currentSSID = WiFi.SSID();
     if (currentSSID.length() == 0) currentSSID = wifiSSID;
-    wifiStatusMsg = "Connected to: " + currentSSID;
+    wifiStatusMsg = "Connected to: " + currentSSID + " (" + WiFi.localIP().toString() + ")";
   }
 
   int reportedVolume = (feedbackMode == VIBRATE_ONLY) ? 0 : soundVolume;
@@ -2072,8 +2257,16 @@ void handleApiSetCursor() {
     int newPos = server.arg("pos").toInt();
     if (newPos >= 0 && newPos <= fullBuffer.length()) {
       cursorPos = newPos;
-      clearSelection();
+      if (!server.hasArg("keepSel") && !server.hasArg("wordEnd")) {
+        clearSelection();
+      }
       scrollWindow();
+      if (server.hasArg("wordEnd")) {
+        int wEnd = constrain(server.arg("wordEnd").toInt(), cursorPos, (int)fullBuffer.length());
+        if (wEnd - cursorPos <= 16 && wEnd > windowStart + 16) {
+          windowStart = wEnd - 16;
+        }
+      }
       redrawLCDLine();
     }
   }
@@ -2203,7 +2396,20 @@ void setup() {
 
   pinMode(vibroPin, OUTPUT);
   digitalWrite(vibroPin, LOW);
+  Wire.setPins(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.begin();
+  Wire.setClock(50000);
+  
+  for (byte addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("Found I2C device at 0x%02X\n", addr);
+    }
+  }
+
+  Wire.beginTransmission(I2C_ADDR);
+  byte i2cErr = Wire.endTransmission();
+  Serial.printf("LCD at 0x%02X status (0 = OK): %d\n", I2C_ADDR, i2cErr);
 
   lcd.init();
   lcd.backlight();
@@ -2231,9 +2437,17 @@ void setup() {
   loadSecurityPreferences();
   applyBrightness(lcdBrightness);
 
+  WiFi.persistent(false);
   WiFi.mode(WIFI_AP_STA);
+  WiFi.setTxPower(WIFI_POWER_17dBm);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
   WiFi.softAP("Braillify", "");
+
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+    if (event == ARDUINO_EVENT_WIFI_AP_STACONNECTED) {
+      pendingApConnectBanner = true;
+    }
+  });
 
   dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
   dnsServer.start(DNS_PORT, "*", apIP);
@@ -2545,7 +2759,7 @@ void performUndo() {
   if (undoStack.empty()) {
     errorTone();
     lcd.setCursor(0, 0);
-    lcd.print("Nothing to Undo ");
+    showLcdBanner("Nothing to Undo ", "History Empty   ", 1000);
     smartDelay(700);
     updateLCDMode();
     lcd.setCursor(getLcdCursor(), 1);
@@ -2560,6 +2774,7 @@ void performUndo() {
   for (size_t i = 0; i < prev.braille.size() && i < MAX_BUFFER; i++) {
     fullBufferBraille[i] = prev.braille[i];
   }
+  recomputeBufferBraille();
 
   brailleBits = 0;
   clearSelection();
@@ -2589,6 +2804,18 @@ char getHeldKey() {
 }
 
 void loop() {
+  if (pendingApConnectBanner) {
+    pendingApConnectBanner = false;
+    modeTone();
+    showLcdBanner("Device Connected", "AP Client Linked", 2500);
+  }
+
+  if (lcdBannerUntil > 0 && millis() >= lcdBannerUntil) {
+    lcdBannerUntil = 0;
+    updateLCDMode();
+    redrawLCDLine();
+  }
+
   dnsServer.processNextRequest();
   server.handleClient();
   checkWifiStatus();
@@ -2661,18 +2888,11 @@ void handleHashDoublePress() {
 }
 
 void showFeedbackMode() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-
   if (feedbackMode == VIBRATE_ONLY) {
-    lcd.print("===   MUTE   ===");
-  } 
-  else if (feedbackMode == SOUND_ONLY) {
-    lcd.print("===  SOUND   ===");
+    showLcdBanner("===   MUTE   ===", "Vibration Only  ", 1500);
+  } else {
+    showLcdBanner("===  SOUND   ===", "Audio Feedback  ", 1500);
   }
-  smartDelay(1500);
-  updateLCDMode();
-  redrawLCDLine();
 }
 
 void handleKeyPress(char key) {

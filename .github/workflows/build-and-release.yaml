@@ -1,97 +1,149 @@
 name: Cross-Platform Build and Release
 
 on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'braillify/braillify.ino'
   workflow_dispatch:
 
 jobs:
+  # ==========================================
+  # JOB 0: Check if FIRMWARE_VERSION changed
+  # ==========================================
+  check:
+    name: Check Firmware Version Change
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check_ver.outputs.should_release }}
+      version: ${{ steps.check_ver.outputs.version }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          fetch-tags: true
+
+      - name: Compare Firmware Version
+        id: check_ver
+        run: |
+          CURRENT_VER=$(grep -E '#define +FIRMWARE_VERSION' braillify/braillify.ino | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$CURRENT_VER" >> $GITHUB_OUTPUT
+
+          if [ -z "$CURRENT_VER" ]; then
+            echo "FIRMWARE_VERSION not found."
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Always allow manual workflow_dispatch runs
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual trigger detected for v$CURRENT_VER."
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Extract previous commit's version (if a parent commit exists)
+          PREV_VER=""
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            PREV_VER=$(git show HEAD~1:braillify/braillify.ino 2>/dev/null | grep -E '#define +FIRMWARE_VERSION' | sed -E 's/.*"([^"]+)".*/\1/' || true)
+          fi
+
+          echo "Previous Version: ${PREV_VER:-none}"
+          echo "Current Version:  $CURRENT_VER"
+
+          if [ "$CURRENT_VER" = "$PREV_VER" ]; then
+            echo "FIRMWARE_VERSION did not change. Skipping release."
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          elif git rev-parse "v$CURRENT_VER" >/dev/null 2>&1; then
+            echo "Tag v$CURRENT_VER already exists. Skipping release."
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "New firmware version detected (v$CURRENT_VER). Proceeding with release."
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          fi
+
   # ==========================================
   # JOB 1: Package pre-compiled binary
   # ==========================================
   build:
     name: Package Pre-Compiled Binary
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Extract Version from braillify.ino
-      id: get_version
-      run: |
-        # Read the #define FIRMWARE_VERSION line from braillify.ino
-        VERSION=$(grep -E '#define +FIRMWARE_VERSION' braillify/braillify.ino | sed -E 's/.*"([^"]+)".*/\1/')
-        echo "FIRMWARE_VER=$VERSION" >> $GITHUB_ENV
-        echo "Extracted Firmware Version: $VERSION"
+      - name: Prepare Firmware Artifacts
+        run: |
+          VERSION="${{ needs.check.outputs.version }}"
+          mkdir -p ./publish_output
+          cp braillify/build/esp32.esp32.esp32/braillify.ino.bin ./publish_output/firmware.bin
+          cp braillify/build/esp32.esp32.esp32/braillify.ino.bin ./publish_output/braillify-v${VERSION}.bin
 
-    - name: Prepare Firmware Artifacts
-      run: |
-        mkdir -p ./publish_output
-        cp braillify/build/esp32.esp32.esp32/braillify.ino.bin ./publish_output/firmware.bin
-        cp braillify/build/esp32.esp32.esp32/braillify.ino.bin ./publish_output/braillify-v${{ env.FIRMWARE_VER }}.bin
-
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: firmware-binaries
-        path: ./publish_output/*
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-binaries
+          path: ./publish_output/*
 
   # ==========================================
   # JOB 2: Create the GitHub Release
   # ==========================================
   release:
     name: Publish to Releases Tab
-    needs: build
+    needs: [check, build]
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Extract Version from braillify.ino
-      run: |
-        VERSION=$(grep -E '#define +FIRMWARE_VERSION' braillify/braillify.ino | sed -E 's/.*"([^"]+)".*/\1/')
-        echo "FIRMWARE_VER=$VERSION" >> $GITHUB_ENV
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-binaries
+          path: ./artifacts
 
-    - name: Download all build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: firmware-binaries
-        path: ./artifacts
+      - name: Generate Update Manifest JSON
+        run: |
+          VERSION="${{ needs.check.outputs.version }}"
+          PUBDATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          REPO_URL="https://github.com/${{ github.repository }}"
+          DOWNLOAD_URL="$REPO_URL/releases/download/v$VERSION"
 
-    - name: Generate Update Manifest JSON
-      run: |
-        VERSION="${{ env.FIRMWARE_VER }}"
-        PUBDATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-        REPO_URL="https://github.com/${{ github.repository }}"
-        DOWNLOAD_URL="$REPO_URL/releases/download/v$VERSION"
+          cat <<EOF > ./artifacts/manifest.json
+          {
+            "version": "$VERSION",
+            "releaseDate": "$PUBDATE",
+            "firmwareUrl": "$DOWNLOAD_URL/firmware.bin",
+            "versionedUrl": "$DOWNLOAD_URL/braillify-v$VERSION.bin"
+          }
+          EOF
 
-        cat <<EOF > ./artifacts/manifest.json
-        {
-          "version": "$VERSION",
-          "releaseDate": "$PUBDATE",
-          "firmwareUrl": "$DOWNLOAD_URL/firmware.bin",
-          "versionedUrl": "$DOWNLOAD_URL/braillify-v$VERSION.bin"
-        }
-        EOF
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check.outputs.version }}
+          name: Braillify Firmware Release v${{ needs.check.outputs.version }}
+          body: |
+            🚀 Release for Braillify ESP32 Firmware v${{ needs.check.outputs.version }}.
 
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: v${{ env.FIRMWARE_VER }}
-        name: Braillify Firmware Release v${{ env.FIRMWARE_VER }}
-        body: |
-          🚀 Release for Braillify ESP32 Firmware v${{ env.FIRMWARE_VER }}.
+            ### 📦 Artifacts Included
+            - `firmware.bin` (Direct payload link for HTTP OTA updates)
+            - `braillify-v${{ needs.check.outputs.version }}.bin` (Versioned firmware binary)
+            - `manifest.json` (OTA metadata update manifest)
 
-          ### 📦 Artifacts Included
-          * `firmware.bin` (Direct payload link for HTTP OTA updates)
-          * `braillify-v${{ env.FIRMWARE_VER }}.bin` (Versioned firmware binary)
-          * `manifest.json` (OTA metadata update manifest)
-
-          ### 🔄 OTA Direct Download Link
-          `https://github.com/${{ github.repository }}/releases/download/v${{ env.FIRMWARE_VER }}/firmware.bin`
-        files: ./artifacts/*
-        draft: false
-        prerelease: false
+            ### 🔄 OTA Direct Download Link
+            `https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/firmware.bin`
+          files: ./artifacts/*
+          draft: false
+          prerelease: false
