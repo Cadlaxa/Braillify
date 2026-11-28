@@ -15,7 +15,7 @@
 #include <HTTPUpdate.h>
 #include <HTTPClient.h>
 #include <vector>
-#define FIRMWARE_VERSION "1.0.7.5"
+#define FIRMWARE_VERSION "1.0.7.6"
 
 Preferences prefs;
 uint32_t bootId = 0;
@@ -31,7 +31,7 @@ LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 int lcdBrightness = 100;     // 0 - 100%
 int soundVolume = 100;       // 0 - 100%
 int ttsMode = 1;             // 0: OFF, 1: CHAR_AND_WORD, 2: WORD_ONLY, 3: FULL_TEXT
-
+uint32_t readAloudSeq = 0;
 int contractionMode = 0;
 byte pendingSymbolPrefix = 0;
 
@@ -134,6 +134,7 @@ unsigned long keyPressTime = 0;
 const unsigned long holdDelay = 800;
 const unsigned long repeatRate = 120;
 unsigned long nextRepeatTime = 0;
+bool key4LongHandled = false;
 bool hashPending = false;
 unsigned long hashPressTime = 0;
 const unsigned long hashDebounceTime = 250;
@@ -192,6 +193,14 @@ void pushUndoState();
 void handleApiState();
 void showFeedbackMode();
 String lookupUebSymbolPair(byte prefix, byte cell);
+void readBufferAloud();
+void shutdownTone();
+void clearBufferTone();
+void boundaryTone();
+void successTone();
+void otaStartTone();
+void otaCompleteTone();
+void recomputeBufferBraille();
 
 unsigned long lcdBannerUntil = 0;
 String lcdBannerLine0 = "";
@@ -637,7 +646,6 @@ void checkBootAutoUpdate() {
   lcd.print("Checking Update.");
   lcd.setCursor(0, 1);
   lcd.print("v" FIRMWARE_VERSION " ...");
-
   const unsigned long checkDeadline = millis() + 6000; // Hard 6-second limit for network check
 
   WiFiClientSecure client;
@@ -683,7 +691,7 @@ void checkBootAutoUpdate() {
     return;
   }
 
-  String scrollMsg = "    v" + latestVersion + " Ready! ENTER (#)=Update, SPACE (0)=Cancel    ";
+  String scrollMsg = "    v" + latestVersion + " Ready! ENTER=Update, SPACE=Cancel    ";
   int scrollIdx = 0;
   unsigned long lastScrollMs = 0;
   unsigned long promptStartMs = millis();
@@ -714,7 +722,7 @@ void checkBootAutoUpdate() {
     if (key != NO_KEY && key != prevHeldKey) {
       prevHeldKey = key;
       if (key == '#') {
-        sound(1200, 100);
+        otaStartTone();
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("Starting Update ");
@@ -853,6 +861,7 @@ void cycleMode() {
   nextSpecial = false; specialLock = false; specialPressedOnce = false;
   nextText = false; textLock = false; textPressedOnce = false;
   pendingSymbolPrefix = 0;
+
   clearTempIndicator();
   updateLCDMode();
 }
@@ -1356,7 +1365,7 @@ void startUP() {
   startupTone();
 
   int barWidth = 16;
-  int speed = 100;
+  int speed = 65;
   for (int i = 0; i <= barWidth; i++) {
       lcd.setCursor(0, 1);
       for (int j = 0; j < barWidth; j++) {
@@ -1408,7 +1417,10 @@ void handleApiVerifyPin() {
   }
   if (server.hasArg("pin")) {
     if (server.arg("pin") == devicePin) {
+      String msg = server.hasArg("msg") ? server.arg("msg") : "Device Connected";
+      String sub = server.hasArg("sub") ? server.arg("sub") : "Web App Linked  ";
       connectionTone();
+      showLcdBanner(msg, sub, 2000);
       server.send(200, "application/json", "{\"status\":\"success\",\"msg\":\"Connected to Braillify!\"}");
       return;
     }
@@ -1601,21 +1613,16 @@ void handleApiCmd() {
       handleHashSinglePress();
       brailleBits = 0;
     } else if (act == "set_contraction_mode" && server.hasArg("val")) {
+      contractionMode = constrain(server.arg("val").toInt(), 0, 2);
       const char* conLabel = (contractionMode == 0) ? "UEB Grade 2     "
-                          : (contractionMode == 1) ? "Filipino Braille"
+                           : (contractionMode == 1) ? "Filipino Braille"
                                                     : "Grade 1 Off     ";
       showLcdBanner("Contraction Mode", conLabel, 1500);
-      modeTone();
-      contractionMode = constrain(server.arg("val").toInt(), 0, 2);
+      boundaryTone();
       recomputeBufferBraille();
       prefs.begin("settings", false);
       prefs.putInt("conMode", contractionMode);
       prefs.end();
-    } else if (act == "notify") {
-      String msg = server.hasArg("msg") ? server.arg("msg") : "Device Connected";
-      String sub = server.hasArg("sub") ? server.arg("sub") : "Web App Linked  ";
-      modeTone();
-      showLcdBanner(msg, sub, 2000);
     }
   }
   handleApiState();
@@ -2127,6 +2134,8 @@ void handleApiPower() {
 
 void handleApiReboot() {
   server.send(200, "application/json", "{\"status\":\"ESP32 is rebooting...\"}");
+  showLcdBanner("Braillfy is    ", "Rebooting...", 2000);
+  shutdownTone();
   smartDelay(1000);
   ESP.restart();
 }
@@ -2215,7 +2224,8 @@ void getSystemStateJson(String &jsonOut) {
   jsonOut += "\"brightness\":" + String(lcdBrightness) + ",";
   jsonOut += "\"volume\":" + String(reportedVolume) + ",";
   jsonOut += "\"feedbackMode\":" + String((int)feedbackMode) + ",";
-  jsonOut += "\"autoUpdate\":" + String(autoUpdateOnBoot ? "true" : "false");
+  jsonOut += "\"autoUpdate\":" + String(autoUpdateOnBoot ? "true" : "false") + ",";
+  jsonOut += "\"readAloudSeq\":" + String(readAloudSeq);
   jsonOut += "}";
 }
 
@@ -2276,12 +2286,8 @@ void handleApiSetCursor() {
 void updateFirmwareFromGitHub(const String& binUrl) {
   if (WiFi.status() != WL_CONNECTED) {
     lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(" Connect to     ");
-    lcd.setCursor(0, 1);
-    lcd.print(" internet first ");
+    showLcdBanner(" Connect to     ", " internet first ", 2000);
     errorTone();
-    smartDelay(2000);
     updateLCDMode();
     redrawLCDLine();
     return;
@@ -2373,7 +2379,7 @@ void updateFirmwareFromGitHub(const String& binUrl) {
       lcd.print(" Update Success!");
       lcd.setCursor(0, 1);
       lcd.print(" Rebooting...   ");
-      saveTone();
+      shutdownTone();
       smartDelay(2000);
       ESP.restart();
       break;
@@ -2381,6 +2387,25 @@ void updateFirmwareFromGitHub(const String& binUrl) {
   scrollWindow();
   redrawLCDLine();
   updateLCDMode();
+}
+
+void readBufferAloud() {
+  String textToRead = fullBuffer;
+  textToRead.trim();
+
+  if (textToRead.length() == 0) {
+    errorTone();
+    showLcdBanner("Buffer Empty    ", "Nothing to Read ", 1200);
+    return;
+  }
+
+  readAloudSeq++;
+  if (feedbackMode == VIBRATE_ONLY) {
+    vibrate(150, 200);
+  } else {
+    successTone();
+  }
+  showLcdBanner("Reading on App..", textToRead.substring(0, 16), 1500);
 }
 
 // ---------- ESP32 Setup & Loop ----------
@@ -2698,6 +2723,11 @@ void startupTone() {
   sound(2000, 120); smartDelay(150);
   sound(2500, 160); smartDelay(200);
 }
+void shutdownTone() {
+  sound(2093, 100); smartDelay(120);
+  sound(1568, 100); smartDelay(120);
+  sound(1047, 220); smartDelay(240);
+}
 void saveTone() {
   sound(2000, 60); smartDelay(200);
   sound(2400, 60); smartDelay(200);
@@ -2729,6 +2759,30 @@ void connectionTone() {
   sound(1800, 80); smartDelay(100);
   sound(2400, 80); smartDelay(100);
   sound(3000, 140); smartDelay(150);
+}
+void clearBufferTone() {
+  sound(2200, 50);  smartDelay(65);
+  sound(1500, 50);  smartDelay(65);
+  sound(900,  110); smartDelay(120);
+}
+void boundaryTone() {
+  sound(950, 45);   smartDelay(60);
+  sound(950, 45);   smartDelay(50);
+}
+void successTone() {
+  sound(1976, 65);  smartDelay(80);
+  sound(2637, 130); smartDelay(145);
+}
+void otaStartTone() {
+  sound(2000, 60);  smartDelay(90);
+  sound(2000, 60);  smartDelay(90);
+  sound(2800, 100); smartDelay(120);
+}
+void otaCompleteTone() {
+  sound(1568, 75);  smartDelay(90);
+  sound(2093, 75);  smartDelay(90);
+  sound(2637, 75);  smartDelay(90);
+  sound(3136, 220); smartDelay(240);
 }
 
 struct UndoState {
@@ -2851,9 +2905,17 @@ void loop() {
           lastKey = key;
           keyPressTime = now;
           nextRepeatTime = now + holdDelay;
-          handleKeyPress(key);
+          key4LongHandled = false;
+
+          // Defer '4' until release (short press) or holdDelay (long press)
+          if (key != '4') {
+              handleKeyPress(key);
+          }
 
           if (key == '#') lastKey = NO_KEY;
+      } else if (key == '4' && !key4LongHandled && (now - keyPressTime >= holdDelay)) {
+          key4LongHandled = true;
+          readBufferAloud();
       } else if (now >= nextRepeatTime) {
           if (key == '0' || key == 'D' || key == '7' || key == 'C') {
               handleKeyPress(key);
@@ -2861,7 +2923,11 @@ void loop() {
           }
       }
   } else {
+      if (lastKey == '4' && !key4LongHandled) {
+          handleKeyPress('4');
+      }
       lastKey = NO_KEY;
+      key4LongHandled = false;
   }
 }
 
@@ -2889,9 +2955,9 @@ void handleHashDoublePress() {
 
 void showFeedbackMode() {
   if (feedbackMode == VIBRATE_ONLY) {
-    showLcdBanner("===   MUTE   ===", "Vibration Only  ", 1500);
+    showLcdBanner("===   MUTE   ===", "                ", 1500);
   } else {
-    showLcdBanner("===  SOUND   ===", "Audio Feedback  ", 1500);
+    showLcdBanner("===  SOUND   ===", "                ", 1500);
   }
 }
 

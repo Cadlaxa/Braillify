@@ -1391,6 +1391,7 @@ let activeCaretHandle = null;
 
 let lastSpokenText = "";
 let lastSpokenCursor = 0;
+let lastReadAloudSeq = null;
 let isFirstStateUpdate = true;
 let hasSetupWizardPrompted = false;
 
@@ -2925,19 +2926,28 @@ const PLAY_SVG_PATH  = '<path d="M8 5v14l11-7z"/>';
 let ttsSyncLcdCursor = false;
 let lcdCursorSyncInFlight = false;
 let lastSyncedLcdWordKey = "";
+let pendingLcdSync = null;
+const LCD_SYNC_LEAD_MS = 140; // Compensates for ESP32 HTTP round-trip latency
 
 function syncLcdCursorToTtsWord(wordStart, wordEnd) {
   if (!ttsSyncLcdCursor || DEV_MODE || isDeviceDisconnected) return;
   const wordKey = `${wordStart}:${wordEnd}`;
-  if (wordKey === lastSyncedLcdWordKey || lcdCursorSyncInFlight) return;
+  if (wordKey === lastSyncedLcdWordKey) return;
+
+  // Queue the latest word if a request is already in flight instead of dropping it
+  if (lcdCursorSyncInFlight) {
+    pendingLcdSync = { wordStart, wordEnd };
+    return;
+  }
 
   lastSyncedLcdWordKey = wordKey;
   lcdCursorSyncInFlight = true;
+  pendingLcdSync = null;
 
   fetch(`/api/setcursor?pos=${wordStart}&wordEnd=${wordEnd}&keepSel=1`, { cache: 'no-store' })
     .then(r => r.ok ? r.json() : null)
     .then(d => {
-      if (d) {
+      if (d && ttsSyncLcdCursor) {
         currentCursorPos = d.cursor || wordStart;
         const l0 = document.getElementById('lcd-line0');
         const l1 = document.getElementById('lcd-line1');
@@ -2948,6 +2958,11 @@ function syncLcdCursorToTtsWord(wordStart, wordEnd) {
     .catch(() => {})
     .finally(() => {
       lcdCursorSyncInFlight = false;
+      if (pendingLcdSync && ttsSyncLcdCursor) {
+        const next = pendingLcdSync;
+        pendingLcdSync = null;
+        syncLcdCursorToTtsWord(next.wordStart, next.wordEnd);
+      }
     });
 }
 
@@ -3088,14 +3103,28 @@ function setTtsPlaybackControls(visible, paused = false) {
       // Weighted timeline sync when onboundary isn't emitted (Android)
       if (!ttsBoundarySupported && ttsActiveWordTimeline.length > 0 && ttsSpeakStartTime > 0) {
         const elapsedMs = Date.now() - ttsSpeakStartTime;
+        const lcdElapsedMs = elapsedMs + LCD_SYNC_LEAD_MS;
+
         let activeEntry = ttsActiveWordTimeline[0];
+        let lcdEntry = ttsActiveWordTimeline[0];
+
         for (let i = 0; i < ttsActiveWordTimeline.length; i++) {
           if (elapsedMs >= ttsActiveWordTimeline[i].startMs) {
             activeEntry = ttsActiveWordTimeline[i];
-          } else {
+          }
+          if (lcdElapsedMs >= ttsActiveWordTimeline[i].startMs) {
+            lcdEntry = ttsActiveWordTimeline[i];
+          } else if (elapsedMs < ttsActiveWordTimeline[i].startMs) {
             break;
           }
         }
+
+        if (lcdEntry && ttsBufferBaseIdx >= 0 && ttsFullQueueText) {
+          let wEnd = lcdEntry.globalStart;
+          while (wEnd < ttsFullQueueText.length && !/\s/.test(ttsFullQueueText[wEnd])) wEnd++;
+          syncLcdCursorToTtsWord(ttsBufferBaseIdx + lcdEntry.globalStart, ttsBufferBaseIdx + wEnd);
+        }
+
         if (activeEntry) {
           ttsCharOffset = activeEntry.globalStart;
           highlightSpokenWordAt(ttsCharOffset);
@@ -3841,6 +3870,23 @@ function updateState(d){
     isFirstStateUpdate = false;
   } else {
     handleLiveTtsFeedback(d);
+  }
+
+  if (!ttsSyncLcdCursor && !lcdCursorSyncInFlight) {
+    document.getElementById('lcd-line0').innerText = d.lcd0;
+    document.getElementById('lcd-line1').innerText = d.lcd1;
+  }
+
+  if (typeof d.readAloudSeq === 'number') {
+    if (lastReadAloudSeq === null) {
+      lastReadAloudSeq = d.readAloudSeq;
+    } else if (d.readAloudSeq !== lastReadAloudSeq) {
+      lastReadAloudSeq = d.readAloudSeq;
+      const text = (d.fullText || '').trim();
+      if (text) {
+        speakTextUtterance(text, true, false, 0, true);
+      }
+    }
   }
 
   syncPinLockState(Boolean(d.hasPin));
